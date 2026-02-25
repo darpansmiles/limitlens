@@ -16,7 +16,7 @@ A global snapshot is a composition of provider snapshots captured in one refresh
 
 The root file `README.md` introduces the product promise and current project status so a new contributor can understand whether they are looking at a planning branch or a release-ready branch. The `LICENSE.md` file defines the legal boundary under MIT terms and is part of the project's distribution contract.
 
-The `docs/SPEC.md` document is the product contract for implementation and contains the approved decisions that engineering should treat as constraints rather than suggestions. It records scope, threshold policy, permissions expectations, and milestone sequencing so architectural tradeoffs remain anchored to user intent.
+The local `docs/SPEC.md` document is the private product contract used during planning and is intentionally excluded from git via `.gitignore`. The committed architecture narrative in this file is therefore the canonical tracked explanation of the system shape for repository consumers.
 
 The `cli/limitlens.js` file is the active executable prototype. It currently performs provider discovery, parses local artifacts, normalizes the result into one snapshot object, and renders either a human-readable report or JSON. This file is intentionally doing more than one responsibility during the prototype stage because it allows rapid iteration on source semantics before those responsibilities are split into a shared core package.
 

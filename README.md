@@ -10,7 +10,6 @@ Specification-approved bootstrap phase.
 
 This repository currently contains:
 
-- Approved product specification
 - Human-friendly CLI prototype
 - Architecture narration document
 - MIT license
@@ -30,15 +29,11 @@ Rationale: it communicates "seeing your limits clearly" across providers without
 
 ## What Exists Today
 
-### 1. Detailed Spec
-
-- [docs/SPEC.md](./docs/SPEC.md)
-
-### 2. System Architecture Narrative
+### 1. System Architecture Narrative
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 
-### 3. CLI Prototype
+### 2. CLI Prototype
 
 ```bash
 cd /Users/darpan/Documents/Personal/antigravity/limitlens
@@ -64,3 +59,7 @@ The CLI currently reads local data from:
 ## License
 
 MIT. See [LICENSE.md](./LICENSE.md).
+
+## Internal Planning Note
+
+`docs/SPEC.md` is intentionally kept local and excluded from git per project preference.
