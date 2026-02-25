@@ -1,1 +1,3 @@
 docs/SPEC.md
+.build/
+.swiftpm/

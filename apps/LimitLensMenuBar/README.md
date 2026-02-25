@@ -1,10 +1,5 @@
 # LimitLens Menu Bar App
 
-Implementation placeholder.
+The active native implementation lives in the SwiftPM executable target at `Sources/LimitLensMenuBar`.
 
-This target will become a native macOS menu bar app with:
-
-- Live provider status in top bar
-- Configurable threshold notifications
-- Settings UI
-- Universal support for Intel + Apple Silicon
+This `apps/LimitLensMenuBar` directory is reserved for future distribution assets such as app packaging metadata, release notes, screenshots, and notarization artifacts.

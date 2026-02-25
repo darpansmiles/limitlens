@@ -1,65 +1,110 @@
 # LimitLens
 
-LimitLens is a processor-agnostic usage and limits monitor for AI coding tools.
+LimitLens is a processor-agnostic, local-first usage monitor for Codex, Claude, and Antigravity.
 
-It is inspired by the product direction of CodexBar (menu bar visibility, lightweight status, rapid refresh) while remaining open, local-first, and architecture-agnostic across Intel and Apple Silicon Macs.
+It ships as one Swift package with three executables:
 
-## Status
+- `limitlens` for terminal snapshots and JSON output.
+- `LimitLensMenuBar` for always-on macOS top-bar monitoring and alerts.
+- `limitlens-core-tests` for parser and threshold unit checks.
 
-Specification-approved bootstrap phase.
+## Milestone Status
 
-This repository currently contains:
+Milestones 1, 2, and 3 are implemented:
 
-- Human-friendly CLI prototype
-- Architecture narration document
-- MIT license
+- Shared core adapter + normalization engine.
+- Native CLI with human mode, JSON mode, watch mode, and path overrides.
+- Native menu bar app with adaptive refresh, threshold alerts, launch-at-login, and a built-in settings window.
+- Portable unit-test harness with fixture-driven parser checks and threshold crossing/cooldown checks.
 
-Implementation now proceeds with:
+## Requirements
 
-- Full native macOS menu bar app
-- Threshold-based notifications
-- Swift production CLI
-- Packaging for Intel + Apple Silicon
+- macOS 13+
+- Swift toolchain (Command Line Tools or Xcode)
 
-## Project Name
-
-`LimitLens`
-
-Rationale: it communicates "seeing your limits clearly" across providers without tying the brand to one model vendor.
-
-## What Exists Today
-
-### 1. System Architecture Narrative
-
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
-
-### 2. CLI Prototype
+## Build
 
 ```bash
 cd /Users/darpan/Documents/Personal/antigravity/limitlens
-node cli/limitlens.js
+swift build
 ```
 
-Other modes:
+## CLI Usage
+
+One-shot snapshot:
 
 ```bash
-node cli/limitlens.js --json
-node cli/limitlens.js --watch --interval 30
-npm run limits
-npm run limits:json
-npm run limits:watch
+swift run limitlens
 ```
 
-The CLI currently reads local data from:
+JSON mode:
 
-- `~/.codex/sessions`
-- `~/.claude/projects`
-- `~/Library/Application Support/Antigravity/logs`
+```bash
+swift run limitlens --json
+```
+
+Watch mode:
+
+```bash
+swift run limitlens --watch --interval 30
+```
+
+Override source paths for a run:
+
+```bash
+swift run limitlens --codex-path ~/.codex/sessions --claude-path ~/.claude/projects --antigravity-logs-path "~/Library/Application Support/Antigravity/logs"
+```
+
+## Menu Bar App Usage
+
+Launch app:
+
+```bash
+swift run LimitLensMenuBar
+```
+
+The app appears in the macOS menu bar and provides:
+
+- Severity-colored top-bar status.
+- Provider health lines with pressure/signal context.
+- In-app settings window for paths, thresholds, notification mode, cooldown, and launch-at-login.
+- Optional deep-link to macOS notification settings.
+
+## Unit Tests
+
+Run core parser and threshold tests:
+
+```bash
+swift run limitlens-core-tests
+```
+
+NPM shortcut:
+
+```bash
+npm run limits:test
+```
+
+## Settings and Permissions
+
+Settings are stored in:
+
+- `~/Library/Application Support/LimitLens/settings.json`
+- `~/Library/Application Support/LimitLens/runtime_state.json`
+
+Notification permission is required for banner/sound notification modes.
+
+Defaults:
+
+- Thresholds: `70/75/80/85/90/95`
+- Launch at login: enabled
+- Notification mode: `sound+banner`
+
+## Notes
+
+`docs/SPEC.md` remains local-only and untracked by design.
+
+`cli/limitlens.js` is kept as a legacy prototype reference.
 
 ## License
 
 MIT. See [LICENSE.md](./LICENSE.md).
-
-## Internal Planning Note
-
-`docs/SPEC.md` is intentionally kept local and excluded from git per project preference.

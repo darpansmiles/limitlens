@@ -1,11 +1,13 @@
 {
   "name": "limitlens",
-  "version": "0.1.0-spec",
+  "version": "0.2.0",
   "private": true,
-  "description": "LimitLens CLI prototype and product spec for a processor-agnostic usage monitor.",
+  "description": "LimitLens native Swift CLI and menu bar app for processor-agnostic AI usage monitoring.",
   "scripts": {
-    "limits": "node ./cli/limitlens.js",
-    "limits:json": "node ./cli/limitlens.js --json",
-    "limits:watch": "node ./cli/limitlens.js --watch --interval 30"
+    "limits": "swift run limitlens",
+    "limits:json": "swift run limitlens --json",
+    "limits:watch": "swift run limitlens --watch --interval 30",
+    "limits:test": "swift run limitlens-core-tests",
+    "limits:legacy": "node ./cli/limitlens.js"
   }
 }

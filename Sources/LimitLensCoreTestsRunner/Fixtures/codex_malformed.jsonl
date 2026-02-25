@@ -1,0 +1,2 @@
+not-json
+{"type":"event_msg","payload":{"type":"token_count","info":"bad-shape"}}
