@@ -1,0 +1,11 @@
+{
+  "name": "limitlens",
+  "version": "0.1.0-spec",
+  "private": true,
+  "description": "LimitLens CLI prototype and product spec for a processor-agnostic usage monitor.",
+  "scripts": {
+    "limits": "node ./cli/limitlens.js",
+    "limits:json": "node ./cli/limitlens.js --json",
+    "limits:watch": "node ./cli/limitlens.js --watch --interval 30"
+  }
+}
