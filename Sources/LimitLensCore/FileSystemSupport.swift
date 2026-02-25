@@ -33,8 +33,7 @@ public enum FileSystemSupport {
 
     public static func latestFile(
         in rootPath: String,
-        matching: (URL) -> Bool,
-        maxEntries: Int
+        matching: (URL) -> Bool
     ) -> URL? {
         let rootURL = URL(fileURLWithPath: rootPath)
         guard let enumerator = FileManager.default.enumerator(
@@ -47,14 +46,8 @@ public enum FileSystemSupport {
 
         var latestURL: URL?
         var latestMtime = Date.distantPast
-        var visited = 0
 
         while let item = enumerator.nextObject() as? URL {
-            visited += 1
-            if visited > maxEntries {
-                break
-            }
-
             guard matching(item) else {
                 continue
             }

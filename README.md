@@ -10,12 +10,13 @@ It ships as one Swift package with three executables:
 
 ## Milestone Status
 
-Milestones 1, 2, and 3 are implemented:
+Milestones 1, 2, 3, and 4 are implemented:
 
 - Shared core adapter + normalization engine.
 - Native CLI with human mode, JSON mode, watch mode, and path overrides.
 - Native menu bar app with adaptive refresh, threshold alerts, launch-at-login, and a built-in settings window.
 - Portable unit-test harness with fixture-driven parser checks and threshold crossing/cooldown checks.
+- Milestone 4 hardening: provider-pluggable architecture, unified severity semantics, permission-aware notifications, robust launch-at-login reporting, install/uninstall/doctor scripts, and CI workflow.
 
 ## Requirements
 
@@ -27,6 +28,34 @@ Milestones 1, 2, and 3 are implemented:
 ```bash
 cd /Users/darpan/Documents/Personal/antigravity/limitlens
 swift build
+```
+
+## Install (Local Machine)
+
+Install CLI tools + macOS app bundle:
+
+```bash
+bash ./scripts/install.sh
+```
+
+Uninstall:
+
+```bash
+bash ./scripts/uninstall.sh
+```
+
+Environment doctor:
+
+```bash
+bash ./scripts/doctor.sh
+```
+
+NPM shortcuts:
+
+```bash
+npm run limits:install
+npm run limits:uninstall
+npm run limits:doctor
 ```
 
 ## CLI Usage
@@ -65,10 +94,11 @@ swift run LimitLensMenuBar
 
 The app appears in the macOS menu bar and provides:
 
-- Severity-colored top-bar status.
+- Severity-colored top-bar status using a shared severity policy.
 - Provider health lines with pressure/signal context.
 - In-app settings window for paths, thresholds, notification mode, cooldown, and launch-at-login.
-- Optional deep-link to macOS notification settings.
+- Permission-aware notification status feedback.
+- Deep-link to macOS notification settings.
 
 ## Unit Tests
 
@@ -98,6 +128,12 @@ Defaults:
 - Thresholds: `70/75/80/85/90/95`
 - Launch at login: enabled
 - Notification mode: `sound+banner`
+
+## Extending Providers
+
+Provider architecture is incremental. New providers can be added via adapter + registry registration without redesigning core entities.
+
+- Extension guide: [`docs/adding-providers.md`](./docs/adding-providers.md)
 
 ## Notes
 

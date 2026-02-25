@@ -63,16 +63,26 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     private var currentSnapshot: GlobalSnapshot?
     private var settingsWindowController: SettingsWindowController?
 
+    private var notificationStatusText = "Checking..."
+    private var lastNotificationDeliveryIssue: String?
+    private var launchStatusText = "Not configured"
+
     private var appliedLaunchAtLogin: Bool?
     private var appliedLaunchExecutablePath: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        notificationCoordinator.requestPermissions()
-
         runtimeState = settingsStore.loadRuntimeState()
         currentSettings = settingsStore.loadSettings()
 
         configureStatusItem()
+        refreshNotificationAuthorizationState()
+
+        notificationCoordinator.requestPermissions { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.refreshNotificationAuthorizationState()
+            }
+        }
+
         applyLaunchPreference()
         refreshSnapshot(sendNotifications: false)
         startOrUpdateTimer(force: true)
@@ -87,6 +97,18 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    private func refreshNotificationAuthorizationState() {
+        notificationCoordinator.refreshAuthorizationState { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+                self.notificationStatusText = self.notificationCoordinator.authorizationSummaryText()
+                self.rebuildMenu()
+            }
+        }
+    }
+
     private func updateStatusItemAppearance(with snapshot: GlobalSnapshot?) {
         guard let button = statusItem.button else {
             return
@@ -97,7 +119,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             return
         }
 
-        let severity = overallSeverity(for: snapshot)
+        let severity = visualSeverity(from: SeverityEvaluator.globalSeverity(for: snapshot))
         let compactText = SnapshotFormatter.compactStatusText(snapshot)
 
         let iconAttributes: [NSAttributedString.Key: Any] = [
@@ -147,6 +169,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         startOrUpdateTimer(snapshot: snapshot)
 
         updateStatusItemAppearance(with: snapshot)
+        refreshNotificationAuthorizationState()
 
         var mutableState = runtimeState
         let events = ThresholdEngine.evaluate(
@@ -160,7 +183,11 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
         if sendNotifications {
             for event in events {
-                notificationCoordinator.send(event: event, mode: currentSettings.notificationMode)
+                notificationCoordinator.send(event: event, mode: currentSettings.notificationMode) { [weak self] result in
+                    DispatchQueue.main.async {
+                        self?.handleNotificationResult(result)
+                    }
+                }
             }
         }
 
@@ -168,20 +195,69 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    private func handleNotificationResult(_ result: NotificationSendResult) {
+        switch result {
+        case .sent, .skippedDisabled, .soundOnly:
+            lastNotificationDeliveryIssue = nil
+        case .blockedByPermission:
+            lastNotificationDeliveryIssue = "Notification banner blocked by macOS permission."
+        case .failed(let message):
+            lastNotificationDeliveryIssue = "Notification delivery failed: \(message)"
+        }
+
+        rebuildMenu()
+    }
+
     private func applyLaunchPreference() {
-        // The LaunchAgent points to this running executable path.
-        let executablePath = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+        let resolution: (path: String?, warning: String?) =
+            currentSettings.launchAtLogin ? resolveLaunchExecutablePath() : (nil, nil)
+        let desiredPath = currentSettings.launchAtLogin ? resolution.path : nil
+
         let noChange =
             (appliedLaunchAtLogin == currentSettings.launchAtLogin) &&
-            (appliedLaunchExecutablePath == executablePath)
+            (appliedLaunchExecutablePath == desiredPath)
 
         guard !noChange else {
+            if let warning = resolution.warning {
+                launchStatusText = warning
+            }
             return
         }
 
-        launchManager.setEnabled(currentSettings.launchAtLogin, executablePath: executablePath)
+        let result = launchManager.setEnabled(currentSettings.launchAtLogin, executablePath: desiredPath)
+
+        switch result {
+        case .success:
+            if currentSettings.launchAtLogin {
+                launchStatusText = "Enabled"
+            } else {
+                launchStatusText = "Disabled"
+            }
+        case .failure(let message):
+            launchStatusText = message
+        }
+
+        if let warning = resolution.warning {
+            launchStatusText = warning
+        }
+
         appliedLaunchAtLogin = currentSettings.launchAtLogin
-        appliedLaunchExecutablePath = executablePath
+        appliedLaunchExecutablePath = desiredPath
+    }
+
+    private func resolveLaunchExecutablePath() -> (path: String?, warning: String?) {
+        if Bundle.main.bundleURL.pathExtension == "app", let bundled = Bundle.main.executableURL?.path {
+            return (bundled, nil)
+        }
+
+        let commandPath = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+
+        // Development `swift run` paths are not stable across clean/rebuild cycles.
+        if commandPath.contains("/.build/") {
+            return (nil, "Launch at login needs an installed app bundle (not a development build path).")
+        }
+
+        return (commandPath, nil)
     }
 
     private func rebuildMenu() {
@@ -213,6 +289,20 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         )
         thresholdItem.isEnabled = false
         menu.addItem(thresholdItem)
+
+        let notificationStatusItem = NSMenuItem(title: "Notifications: \(notificationStatusText)", action: nil, keyEquivalent: "")
+        notificationStatusItem.isEnabled = false
+        menu.addItem(notificationStatusItem)
+
+        let launchStatusItem = NSMenuItem(title: "Launch at login: \(launchStatusText)", action: nil, keyEquivalent: "")
+        launchStatusItem.isEnabled = false
+        menu.addItem(launchStatusItem)
+
+        if let issue = lastNotificationDeliveryIssue {
+            let issueItem = NSMenuItem(title: "Alert issue: \(issue)", action: nil, keyEquivalent: "")
+            issueItem.isEnabled = false
+            menu.addItem(issueItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -259,12 +349,6 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let permissionNote = NSMenuItem(title: "Permission required: Notifications", action: nil, keyEquivalent: "")
-        permissionNote.isEnabled = false
-        menu.addItem(permissionNote)
-
-        menu.addItem(NSMenuItem.separator())
-
         let quitItem = NSMenuItem(title: "Quit LimitLens", action: #selector(handleQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -273,7 +357,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func providerMenuItem(for snapshot: ProviderSnapshot) -> NSMenuItem {
-        let severity = severity(for: snapshot)
+        let severity = visualSeverity(from: SeverityEvaluator.providerSeverity(for: snapshot))
         let pressureText: String
 
         if let pressure = snapshot.pressurePercent {
@@ -282,7 +366,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             pressureText = "n/a"
         }
 
-        var text = "\(severity.symbol) \(snapshot.provider.rawValue.capitalized)  pressure=\(pressureText)  \(snapshot.currentStatusSummary)"
+        var text = "\(severity.symbol) \(snapshot.providerDisplayName)  pressure=\(pressureText)  \(snapshot.currentStatusSummary)"
 
         if let signal = snapshot.historicalSignals.sorted(by: { $0.observedAt > $1.observedAt }).first {
             // Keeping signal age visible makes historical warnings actionable.
@@ -322,33 +406,6 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         return list.isEmpty ? "none" : list
     }
 
-    private func overallSeverity(for snapshot: GlobalSnapshot) -> VisualSeverity {
-        let maxPressure = snapshot.providers.compactMap(\.pressurePercent).max() ?? 0
-
-        if maxPressure >= 95 {
-            return .critical
-        }
-        if maxPressure >= 80 {
-            return .warning
-        }
-
-        // Recent rate-limit evidence still deserves warning state even without pressure metrics.
-        let hasRecentSignal = snapshot.providers.contains { provider in
-            provider.historicalSignals.contains { signal in
-                Date().timeIntervalSince(signal.observedAt) <= 3_600
-            }
-        }
-
-        if hasRecentSignal {
-            return .warning
-        }
-        if maxPressure > 0 {
-            return .normal
-        }
-
-        return .unknown
-    }
-
     private func resolveRefreshInterval(snapshot: GlobalSnapshot?) -> Int {
         let baseInterval = max(10, currentSettings.refreshIntervalSeconds)
         guard let snapshot else {
@@ -365,22 +422,17 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         return baseInterval
     }
 
-    private func severity(for snapshot: ProviderSnapshot) -> VisualSeverity {
-        if let pressure = snapshot.pressurePercent {
-            if pressure >= 95 {
-                return .critical
-            }
-            if pressure >= 80 {
-                return .warning
-            }
-            return .normal
-        }
-
-        if !snapshot.historicalSignals.isEmpty {
+    private func visualSeverity(from severity: SeverityLevel) -> VisualSeverity {
+        switch severity {
+        case .critical:
+            return .critical
+        case .warning:
             return .warning
+        case .normal:
+            return .normal
+        case .unknown:
+            return .unknown
         }
-
-        return .unknown
     }
 
     private func modeDisplayName(_ mode: NotificationMode) -> String {
@@ -450,6 +502,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
         currentSettings.notificationMode = mode
         settingsStore.saveSettings(currentSettings)
+        refreshNotificationAuthorizationState()
         rebuildMenu()
     }
 

@@ -41,38 +41,42 @@ public enum SnapshotFormatter {
     }
 
     public static func compactStatusText(_ snapshot: GlobalSnapshot) -> String {
-        let codex = snapshot.provider(.codex)
-        let claude = snapshot.provider(.claude)
-        let antigravity = snapshot.provider(.antigravity)
+        let ordered = ProviderRegistry.sortSnapshots(snapshot.providers)
+        var segments: [String] = []
 
-        let codexText: String
-        if let percent = codex?.pressurePercent {
-            codexText = "Cdx \(Int(percent.rounded()))%"
-        } else {
-            codexText = "Cdx -"
+        for provider in ordered.prefix(3) {
+            let severity = SeverityEvaluator.providerSeverity(for: provider)
+            let label = provider.providerShortLabel.isEmpty ? provider.providerDisplayName : provider.providerShortLabel
+
+            if let percent = provider.pressurePercent {
+                segments.append("\(label) \(Int(percent.rounded()))%")
+                continue
+            }
+
+            // Severity marker remains explicit even when exact pressure is unavailable.
+            switch severity {
+            case .critical:
+                segments.append("\(label) !!")
+            case .warning:
+                segments.append("\(label) !")
+            case .normal:
+                segments.append("\(label) ok")
+            case .unknown:
+                segments.append("\(label) -")
+            }
         }
 
-        let claudeText: String
-        if let percent = claude?.pressurePercent {
-            claudeText = "Cla \(Int(percent.rounded()))%"
-        } else {
-            claudeText = "Cla -"
+        let remaining = max(0, ordered.count - 3)
+        if remaining > 0 {
+            segments.append("+\(remaining)")
         }
 
-        let antigravityText: String
-        if let signal = antigravity?.historicalSignals.first {
-            antigravityText = "AG !"
-            _ = signal // Keeps intent explicit: AG indicator turns warning on historical rate-limit.
-        } else {
-            antigravityText = "AG ok"
-        }
-
-        return "\(codexText) | \(claudeText) | \(antigravityText)"
+        return segments.joined(separator: " | ")
     }
 
     private static func renderProvider(_ provider: ProviderSnapshot) -> String {
         var lines: [String] = []
-        lines.append("\(provider.provider.rawValue.capitalized):")
+        lines.append("\(provider.providerDisplayName):")
 
         let pressureText: String
         if let pressure = provider.pressurePercent {

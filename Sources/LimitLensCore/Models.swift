@@ -14,10 +14,93 @@ consume them for rendering and notifications.
 
 import Foundation
 
-public enum ProviderName: String, Codable, CaseIterable, Sendable {
+public struct ProviderDescriptor: Codable, Hashable, Sendable {
+    public let id: String
+    public let displayName: String
+    public let shortLabel: String
+
+    public init(id: String, displayName: String, shortLabel: String) {
+        self.id = id
+        self.displayName = displayName
+        self.shortLabel = shortLabel
+    }
+}
+
+public enum ProviderName: Codable, Hashable, Comparable, Sendable {
     case codex
     case claude
     case antigravity
+    case custom(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "codex":
+            self = .codex
+        case "claude":
+            self = .claude
+        case "antigravity":
+            self = .antigravity
+        default:
+            self = .custom(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .codex:
+            return "codex"
+        case .claude:
+            return "claude"
+        case .antigravity:
+            return "antigravity"
+        case .custom(let id):
+            return id
+        }
+    }
+
+    public var defaultDisplayName: String {
+        switch self {
+        case .codex:
+            return "Codex"
+        case .claude:
+            return "Claude"
+        case .antigravity:
+            return "Antigravity"
+        case .custom(let id):
+            // Custom provider IDs are normalized slugs, so title-casing is a readable default.
+            return id.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    public static let builtInOrder: [ProviderName] = [.codex, .claude, .antigravity]
+
+    public static func < (lhs: ProviderName, rhs: ProviderName) -> Bool {
+        let lhsIndex = builtInOrder.firstIndex(of: lhs)
+        let rhsIndex = builtInOrder.firstIndex(of: rhs)
+
+        // Built-ins stay in deterministic product order, custom providers sort by slug.
+        switch (lhsIndex, rhsIndex) {
+        case let (left?, right?):
+            return left < right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            return lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        self = ProviderName(rawValue: value)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public enum ConfidenceLevel: String, Codable, Sendable {
@@ -73,6 +156,8 @@ public struct HistoricalSignal: Codable, Sendable {
 
 public struct ProviderSnapshot: Codable, Sendable {
     public let provider: ProviderName
+    public var providerDisplayName: String
+    public var providerShortLabel: String
     public var confidence: ConfidenceLevel
     public var currentUsagePercent: Double?
     public var windowResetAt: Date?
@@ -87,6 +172,8 @@ public struct ProviderSnapshot: Codable, Sendable {
 
     public init(
         provider: ProviderName,
+        providerDisplayName: String? = nil,
+        providerShortLabel: String? = nil,
         confidence: ConfidenceLevel,
         currentUsagePercent: Double? = nil,
         windowResetAt: Date? = nil,
@@ -100,6 +187,8 @@ public struct ProviderSnapshot: Codable, Sendable {
         errors: [String] = []
     ) {
         self.provider = provider
+        self.providerDisplayName = providerDisplayName ?? provider.defaultDisplayName
+        self.providerShortLabel = providerShortLabel ?? String(provider.defaultDisplayName.prefix(3))
         self.confidence = confidence
         self.currentUsagePercent = currentUsagePercent
         self.windowResetAt = windowResetAt

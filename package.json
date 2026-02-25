@@ -1,6 +1,6 @@
 {
   "name": "limitlens",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "LimitLens native Swift CLI and menu bar app for processor-agnostic AI usage monitoring.",
   "scripts": {
@@ -8,6 +8,9 @@
     "limits:json": "swift run limitlens --json",
     "limits:watch": "swift run limitlens --watch --interval 30",
     "limits:test": "swift run limitlens-core-tests",
+    "limits:doctor": "bash ./scripts/doctor.sh",
+    "limits:install": "bash ./scripts/install.sh",
+    "limits:uninstall": "bash ./scripts/uninstall.sh",
     "limits:legacy": "node ./cli/limitlens.js"
   }
 }

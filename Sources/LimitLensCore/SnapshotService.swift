@@ -13,26 +13,18 @@ This file talks to adapter implementations to collect provider snapshots and ret
 import Foundation
 
 public struct SnapshotService {
-    private let codexAdapter: ProviderAdapter
-    private let claudeAdapter: ProviderAdapter
-    private let antigravityAdapter: ProviderAdapter
+    private let adapters: [any ProviderAdapter]
 
-    public init(
-        codexAdapter: ProviderAdapter = CodexAdapter(),
-        claudeAdapter: ProviderAdapter = ClaudeAdapter(),
-        antigravityAdapter: ProviderAdapter = AntigravityAdapter()
-    ) {
-        self.codexAdapter = codexAdapter
-        self.claudeAdapter = claudeAdapter
-        self.antigravityAdapter = antigravityAdapter
+    public init(adapters: [any ProviderAdapter] = ProviderRegistry.defaultAdapters()) {
+        self.adapters = adapters
     }
 
     public func collectSnapshot(using settings: LimitLensSettings, now: Date = Date()) -> GlobalSnapshot {
         // Each provider is read independently so one parser failure cannot block the others.
-        let codex = codexAdapter.collect(using: settings)
-        let claude = claudeAdapter.collect(using: settings)
-        let antigravity = antigravityAdapter.collect(using: settings)
+        let collected = adapters.map { adapter in
+            adapter.collect(using: settings)
+        }
 
-        return GlobalSnapshot(capturedAt: now, providers: [codex, claude, antigravity])
+        return GlobalSnapshot(capturedAt: now, providers: ProviderRegistry.sortSnapshots(collected))
     }
 }

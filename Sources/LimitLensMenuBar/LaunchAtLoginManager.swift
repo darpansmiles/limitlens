@@ -9,12 +9,19 @@ This file talks to `LimitLensSettings` via the menu layer, and it talks to the l
 filesystem and `launchctl` command to install, reload, or remove LaunchAgent entries.
 */
 
+import Darwin
 import Foundation
 import LimitLensCore
+
+enum LaunchAtLoginResult {
+    case success
+    case failure(String)
+}
 
 final class LaunchAtLoginManager {
     private let fileManager = FileManager.default
     private let label = "com.limitlens.menubar"
+    private let userID = String(getuid())
 
     var launchAgentURL: URL {
         let home = fileManager.homeDirectoryForCurrentUser
@@ -28,17 +35,24 @@ final class LaunchAtLoginManager {
         fileManager.fileExists(atPath: launchAgentURL.path)
     }
 
-    func setEnabled(_ enabled: Bool, executablePath: String) {
+    func setEnabled(_ enabled: Bool, executablePath: String?) -> LaunchAtLoginResult {
         if enabled {
-            installLaunchAgent(executablePath: executablePath)
+            guard let executablePath else {
+                return .failure("No stable executable path is available for launch-at-login.")
+            }
+            return installLaunchAgent(executablePath: executablePath)
         } else {
-            removeLaunchAgent()
+            return removeLaunchAgent()
         }
     }
 
-    private func installLaunchAgent(executablePath: String) {
+    private func installLaunchAgent(executablePath: String) -> LaunchAtLoginResult {
         let launchAgentsDirectory = launchAgentURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: launchAgentsDirectory, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: launchAgentsDirectory, withIntermediateDirectories: true)
+        } catch {
+            return .failure("Unable to create LaunchAgents directory: \(error.localizedDescription)")
+        }
 
         let plist: [String: Any] = [
             "Label": label,
@@ -57,18 +71,48 @@ final class LaunchAtLoginManager {
             format: .xml,
             options: 0
         ) else {
-            return
+            return .failure("Unable to serialize launch agent plist.")
         }
 
-        try? data.write(to: launchAgentURL, options: .atomic)
+        do {
+            try data.write(to: launchAgentURL, options: .atomic)
+        } catch {
+            return .failure("Unable to write launch agent plist: \(error.localizedDescription)")
+        }
 
-        // We unload first so repeated updates replace older registration cleanly.
-        _ = ProcessSupport.run(executable: "launchctl", arguments: ["unload", launchAgentURL.path])
-        _ = ProcessSupport.run(executable: "launchctl", arguments: ["load", launchAgentURL.path])
+        // We boot out first so repeated updates replace older registration cleanly.
+        _ = ProcessSupport.run(
+            executable: "launchctl",
+            arguments: ["bootout", "gui/\(userID)", launchAgentURL.path]
+        )
+
+        let bootstrap = ProcessSupport.run(
+            executable: "launchctl",
+            arguments: ["bootstrap", "gui/\(userID)", launchAgentURL.path]
+        )
+
+        guard bootstrap.exitCode == 0 else {
+            let errorText = bootstrap.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure("launchctl bootstrap failed: \(errorText.isEmpty ? "unknown error" : errorText)")
+        }
+
+        return .success
     }
 
-    private func removeLaunchAgent() {
-        _ = ProcessSupport.run(executable: "launchctl", arguments: ["unload", launchAgentURL.path])
-        try? fileManager.removeItem(at: launchAgentURL)
+    private func removeLaunchAgent() -> LaunchAtLoginResult {
+        _ = ProcessSupport.run(
+            executable: "launchctl",
+            arguments: ["bootout", "gui/\(userID)", launchAgentURL.path]
+        )
+
+        if fileManager.fileExists(atPath: launchAgentURL.path) {
+            do {
+                try fileManager.removeItem(at: launchAgentURL)
+            } catch {
+                return .failure("Unable to remove launch agent plist: \(error.localizedDescription)")
+            }
+        }
+
+        return .success
     }
 }

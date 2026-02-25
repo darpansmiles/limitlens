@@ -1,0 +1,22 @@
+# This workflow validates that LimitLens builds and that core parser/policy tests pass.
+# It exists to catch regressions in provider parsing and threshold logic before release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  macos-build-and-tests:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build
+
+      - name: Run Core Test Harness
+        run: swift run limitlens-core-tests

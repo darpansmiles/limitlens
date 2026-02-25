@@ -14,24 +14,28 @@ This file talks to filesystem/process support for raw inputs and emits shared mo
 import Foundation
 
 public protocol ProviderAdapter {
+    var descriptor: ProviderDescriptor { get }
     func collect(using settings: LimitLensSettings) -> ProviderSnapshot
 }
 
 public struct CodexAdapter: ProviderAdapter {
     public init() {}
+    public let descriptor = ProviderDescriptor(id: ProviderName.codex.rawValue, displayName: "Codex", shortLabel: "Cdx")
 
     public func collect(using settings: LimitLensSettings) -> ProviderSnapshot {
+        let provider = ProviderName(rawValue: descriptor.id)
         let codexRoot = expandHomePath(settings.codexSessionsPath)
         let codexVersion = extractCodexVersion()
         guard let latestFile = FileSystemSupport.latestFile(
             in: codexRoot,
-            matching: { $0.pathExtension == "jsonl" },
-            maxEntries: 6000
+            matching: { $0.pathExtension == "jsonl" }
         ) else {
             let summary = codexVersion.map { "No Codex session files found, version \($0)" }
                 ?? "No Codex session files found."
             return ProviderSnapshot(
-                provider: .codex,
+                provider: provider,
+                providerDisplayName: descriptor.displayName,
+                providerShortLabel: descriptor.shortLabel,
                 confidence: codexVersion == nil ? .unavailable : .low,
                 appVersion: codexVersion,
                 currentStatusSummary: summary,
@@ -64,7 +68,9 @@ public struct CodexAdapter: ProviderAdapter {
         }
 
         return ProviderSnapshot(
-            provider: .codex,
+            provider: provider,
+            providerDisplayName: descriptor.displayName,
+            providerShortLabel: descriptor.shortLabel,
             confidence: confidence,
             currentUsagePercent: usagePercent,
             windowResetAt: resetAt,
@@ -92,15 +98,16 @@ public struct CodexAdapter: ProviderAdapter {
 
 public struct ClaudeAdapter: ProviderAdapter {
     public init() {}
+    public let descriptor = ProviderDescriptor(id: ProviderName.claude.rawValue, displayName: "Claude", shortLabel: "Cla")
 
     public func collect(using settings: LimitLensSettings) -> ProviderSnapshot {
+        let provider = ProviderName(rawValue: descriptor.id)
         let claudeRoot = expandHomePath(settings.claudeProjectsPath)
         let antigravityLogsRoot = expandHomePath(settings.antigravityLogsPath)
 
         let latestConversationFile = FileSystemSupport.latestFile(
             in: claudeRoot,
-            matching: { $0.pathExtension == "jsonl" },
-            maxEntries: 8000
+            matching: { $0.pathExtension == "jsonl" }
         )
 
         let usageFromConversation = latestConversationFile.flatMap { extractClaudeUsage(from: $0) }
@@ -146,7 +153,9 @@ public struct ClaudeAdapter: ProviderAdapter {
         }
 
         return ProviderSnapshot(
-            provider: .claude,
+            provider: provider,
+            providerDisplayName: descriptor.displayName,
+            providerShortLabel: descriptor.shortLabel,
             confidence: confidence,
             tokenUsage: usageFromConversation,
             contextUsage: contextUsage,
@@ -202,8 +211,10 @@ public struct ClaudeAdapter: ProviderAdapter {
 
 public struct AntigravityAdapter: ProviderAdapter {
     public init() {}
+    public let descriptor = ProviderDescriptor(id: ProviderName.antigravity.rawValue, displayName: "Antigravity", shortLabel: "AG")
 
     public func collect(using settings: LimitLensSettings) -> ProviderSnapshot {
+        let provider = ProviderName(rawValue: descriptor.id)
         let antigravityLogsRoot = expandHomePath(settings.antigravityLogsPath)
         let version = extractAntigravityVersion()
         let codexLogFile = resolveCodexExtensionLog(antigravityLogsRoot: antigravityLogsRoot)
@@ -226,7 +237,9 @@ public struct AntigravityAdapter: ProviderAdapter {
         let summary = version.map { "version \($0)" } ?? "Version unavailable"
 
         return ProviderSnapshot(
-            provider: .antigravity,
+            provider: provider,
+            providerDisplayName: descriptor.displayName,
+            providerShortLabel: descriptor.shortLabel,
             confidence: confidence,
             appVersion: version,
             currentStatusSummary: summary,
