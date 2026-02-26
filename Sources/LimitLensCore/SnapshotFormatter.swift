@@ -40,12 +40,12 @@ public enum SnapshotFormatter {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func compactStatusText(_ snapshot: GlobalSnapshot) -> String {
+    public static func compactStatusText(_ snapshot: GlobalSnapshot, settings: LimitLensSettings = .default) -> String {
         let ordered = ProviderRegistry.sortSnapshots(snapshot.providers)
         var segments: [String] = []
 
         for provider in ordered.prefix(3) {
-            let severity = SeverityEvaluator.providerSeverity(for: provider)
+            let severity = SeverityEvaluator.providerSeverity(for: provider, settings: settings)
             let label = provider.providerShortLabel.isEmpty ? provider.providerDisplayName : provider.providerShortLabel
 
             if let percent = provider.pressurePercent {

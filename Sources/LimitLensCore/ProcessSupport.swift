@@ -12,11 +12,18 @@ without exposing low-level `Process` wiring to higher layers.
 */
 
 import Foundation
+import Darwin
 
 public struct ProcessResult {
     public let exitCode: Int32
     public let stdout: String
     public let stderr: String
+
+    public init(exitCode: Int32, stdout: String, stderr: String) {
+        self.exitCode = exitCode
+        self.stdout = stdout
+        self.stderr = stderr
+    }
 }
 
 public enum ProcessSupport {
@@ -46,16 +53,30 @@ public enum ProcessSupport {
             Thread.sleep(forTimeInterval: 0.01)
         }
 
+        var didTimeout = false
         if process.isRunning {
+            didTimeout = true
             process.terminate()
+
+            // Some child processes ignore SIGTERM; escalate to SIGKILL if needed.
+            let gracefulDeadline = Date().addingTimeInterval(0.5)
+            while process.isRunning && Date() < gracefulDeadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            if process.isRunning {
+                _ = kill(process.processIdentifier, SIGKILL)
+            }
         }
+
+        process.waitUntilExit()
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let exitCode = didTimeout ? -2 : process.terminationStatus
 
-        return ProcessResult(exitCode: process.terminationStatus, stdout: stdout, stderr: stderr)
+        return ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
     }
 }

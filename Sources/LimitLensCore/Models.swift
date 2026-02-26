@@ -242,6 +242,39 @@ public struct ThresholdEvent: Codable, Sendable {
     }
 }
 
+public struct ExternalProviderDefinition: Codable, Hashable, Sendable {
+    public var id: String
+    public var displayName: String
+    public var shortLabel: String
+    public var command: String
+    public var arguments: [String]
+    public var timeoutSeconds: Int
+
+    public init(
+        id: String,
+        displayName: String,
+        shortLabel: String,
+        command: String,
+        arguments: [String] = [],
+        timeoutSeconds: Int = 3
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.shortLabel = shortLabel
+        self.command = command
+        self.arguments = arguments
+        self.timeoutSeconds = timeoutSeconds
+    }
+
+    public var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: id,
+            displayName: displayName,
+            shortLabel: shortLabel
+        )
+    }
+}
+
 public struct LimitLensSettings: Codable, Sendable {
     public var codexSessionsPath: String
     public var claudeProjectsPath: String
@@ -252,6 +285,48 @@ public struct LimitLensSettings: Codable, Sendable {
     public var notificationMode: NotificationMode
     public var notificationCooldownMinutes: Int
     public var launchAtLogin: Bool
+    public var allowExternalProviderCommands: Bool
+    public var externalProviders: [ExternalProviderDefinition]
+
+    private enum CodingKeys: String, CodingKey {
+        case codexSessionsPath
+        case claudeProjectsPath
+        case antigravityLogsPath
+        case refreshIntervalSeconds
+        case defaultThresholds
+        case perProviderThresholds
+        case notificationMode
+        case notificationCooldownMinutes
+        case launchAtLogin
+        case allowExternalProviderCommands
+        case externalProviders
+    }
+
+    public init(
+        codexSessionsPath: String,
+        claudeProjectsPath: String,
+        antigravityLogsPath: String,
+        refreshIntervalSeconds: Int,
+        defaultThresholds: [Int],
+        perProviderThresholds: [String: [Int]],
+        notificationMode: NotificationMode,
+        notificationCooldownMinutes: Int,
+        launchAtLogin: Bool,
+        allowExternalProviderCommands: Bool,
+        externalProviders: [ExternalProviderDefinition]
+    ) {
+        self.codexSessionsPath = codexSessionsPath
+        self.claudeProjectsPath = claudeProjectsPath
+        self.antigravityLogsPath = antigravityLogsPath
+        self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.defaultThresholds = defaultThresholds
+        self.perProviderThresholds = perProviderThresholds
+        self.notificationMode = notificationMode
+        self.notificationCooldownMinutes = notificationCooldownMinutes
+        self.launchAtLogin = launchAtLogin
+        self.allowExternalProviderCommands = allowExternalProviderCommands
+        self.externalProviders = externalProviders
+    }
 
     public static let `default` = LimitLensSettings(
         codexSessionsPath: "~/.codex/sessions",
@@ -262,7 +337,9 @@ public struct LimitLensSettings: Codable, Sendable {
         perProviderThresholds: [:],
         notificationMode: .soundAndBanner,
         notificationCooldownMinutes: 30,
-        launchAtLogin: true
+        launchAtLogin: true,
+        allowExternalProviderCommands: false,
+        externalProviders: []
     )
 
     public func thresholds(for provider: ProviderName) -> [Int] {
@@ -272,6 +349,42 @@ public struct LimitLensSettings: Codable, Sendable {
         return values
             .filter { (0...100).contains($0) }
             .sorted()
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = LimitLensSettings.default
+
+        // We decode each key defensively so config evolution does not wipe user state.
+        codexSessionsPath = container.decodeLossy(String.self, forKey: .codexSessionsPath, default: defaults.codexSessionsPath)
+        claudeProjectsPath = container.decodeLossy(String.self, forKey: .claudeProjectsPath, default: defaults.claudeProjectsPath)
+        antigravityLogsPath = container.decodeLossy(String.self, forKey: .antigravityLogsPath, default: defaults.antigravityLogsPath)
+        refreshIntervalSeconds = max(1, container.decodeLossy(Int.self, forKey: .refreshIntervalSeconds, default: defaults.refreshIntervalSeconds))
+
+        let decodedDefaultThresholds = container.decodeLossy([Int].self, forKey: .defaultThresholds, default: defaults.defaultThresholds)
+        defaultThresholds = normalizeThresholds(decodedDefaultThresholds, fallback: defaults.defaultThresholds)
+
+        perProviderThresholds = container.decodeLossy([String: [Int]].self, forKey: .perProviderThresholds, default: defaults.perProviderThresholds)
+        notificationMode = container.decodeLossy(NotificationMode.self, forKey: .notificationMode, default: defaults.notificationMode)
+        notificationCooldownMinutes = max(0, container.decodeLossy(Int.self, forKey: .notificationCooldownMinutes, default: defaults.notificationCooldownMinutes))
+        launchAtLogin = container.decodeLossy(Bool.self, forKey: .launchAtLogin, default: defaults.launchAtLogin)
+        allowExternalProviderCommands = container.decodeLossy(Bool.self, forKey: .allowExternalProviderCommands, default: defaults.allowExternalProviderCommands)
+        externalProviders = container.decodeLossy([ExternalProviderDefinition].self, forKey: .externalProviders, default: defaults.externalProviders)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(codexSessionsPath, forKey: .codexSessionsPath)
+        try container.encode(claudeProjectsPath, forKey: .claudeProjectsPath)
+        try container.encode(antigravityLogsPath, forKey: .antigravityLogsPath)
+        try container.encode(refreshIntervalSeconds, forKey: .refreshIntervalSeconds)
+        try container.encode(defaultThresholds, forKey: .defaultThresholds)
+        try container.encode(perProviderThresholds, forKey: .perProviderThresholds)
+        try container.encode(notificationMode, forKey: .notificationMode)
+        try container.encode(notificationCooldownMinutes, forKey: .notificationCooldownMinutes)
+        try container.encode(launchAtLogin, forKey: .launchAtLogin)
+        try container.encode(allowExternalProviderCommands, forKey: .allowExternalProviderCommands)
+        try container.encode(externalProviders, forKey: .externalProviders)
     }
 }
 
@@ -289,5 +402,17 @@ public struct ThresholdRuntimeState: Codable, Sendable {
 
     public static var empty: ThresholdRuntimeState {
         ThresholdRuntimeState()
+    }
+}
+
+private func normalizeThresholds(_ values: [Int], fallback: [Int]) -> [Int] {
+    let normalized = Array(Set(values.filter { (0...100).contains($0) })).sorted()
+    return normalized.isEmpty ? fallback : normalized
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossy<T: Decodable>(_ type: T.Type, forKey key: Key, default defaultValue: T) -> T {
+        // We intentionally swallow per-key decode failures so one bad field cannot nuke the whole config.
+        (try? decodeIfPresent(type, forKey: key)) ?? defaultValue
     }
 }

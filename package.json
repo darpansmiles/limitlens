@@ -8,6 +8,7 @@
     "limits:json": "swift run limitlens --json",
     "limits:watch": "swift run limitlens --watch --interval 30",
     "limits:test": "swift run limitlens-core-tests",
+    "limits:test:menu": "swift run limitlens-menubar-tests",
     "limits:doctor": "bash ./scripts/doctor.sh",
     "limits:install": "bash ./scripts/install.sh",
     "limits:uninstall": "bash ./scripts/uninstall.sh",

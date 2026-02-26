@@ -14,9 +14,18 @@ to turn core data into a live, interactive top-bar experience.
 import AppKit
 import Foundation
 import LimitLensCore
+import LimitLensMenuBarSupport
 
 @MainActor
 final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
+    private struct RefreshComputation: Sendable {
+        let settings: LimitLensSettings
+        let settingsWarnings: [String]
+        let snapshot: GlobalSnapshot
+        let runtimeState: ThresholdRuntimeState
+        let events: [ThresholdEvent]
+    }
+
     private enum VisualSeverity {
         case unknown
         case normal
@@ -52,7 +61,6 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let settingsStore = SettingsStore()
-    private let snapshotService = SnapshotService()
     private let notificationCoordinator = NotificationCoordinator()
     private let launchManager = LaunchAtLoginManager()
 
@@ -66,22 +74,23 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     private var notificationStatusText = "Checking..."
     private var lastNotificationDeliveryIssue: String?
     private var launchStatusText = "Not configured"
+    private var settingsLoadWarnings: [String] = []
+    private var runtimeStateWarnings: [String] = []
+    private var refreshInFlight = false
+    private var queuedRefreshWantsNotifications = false
 
     private var appliedLaunchAtLogin: Bool?
     private var appliedLaunchExecutablePath: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        runtimeState = settingsStore.loadRuntimeState()
-        currentSettings = settingsStore.loadSettings()
+        let runtimeStateResult = settingsStore.loadRuntimeStateWithDiagnostics()
+        runtimeState = runtimeStateResult.state
+        runtimeStateWarnings = runtimeStateResult.warnings
+        loadSettingsFromStore()
 
         configureStatusItem()
         refreshNotificationAuthorizationState()
-
-        notificationCoordinator.requestPermissions { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.refreshNotificationAuthorizationState()
-            }
-        }
+        maybeRequestNotificationPermissionIfNeeded()
 
         applyLaunchPreference()
         refreshSnapshot(sendNotifications: false)
@@ -119,8 +128,8 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             return
         }
 
-        let severity = visualSeverity(from: SeverityEvaluator.globalSeverity(for: snapshot))
-        let compactText = SnapshotFormatter.compactStatusText(snapshot)
+        let severity = visualSeverity(from: SeverityEvaluator.globalSeverity(for: snapshot, settings: currentSettings))
+        let compactText = SnapshotFormatter.compactStatusText(snapshot, settings: currentSettings)
 
         let iconAttributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: severity.color,
@@ -160,29 +169,62 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func refreshSnapshot(sendNotifications: Bool) {
-        // Reloading each cycle keeps external edits to settings.json live.
-        currentSettings = settingsStore.loadSettings()
-        startOrUpdateTimer(snapshot: currentSnapshot)
+        if refreshInFlight {
+            // We coalesce stacked timer ticks into one trailing refresh request.
+            queuedRefreshWantsNotifications = queuedRefreshWantsNotifications || sendNotifications
+            return
+        }
 
-        let snapshot = snapshotService.collectSnapshot(using: currentSettings)
-        currentSnapshot = snapshot
-        startOrUpdateTimer(snapshot: snapshot)
+        refreshInFlight = true
+        let runtimeStateAtStart = runtimeState
 
-        updateStatusItemAppearance(with: snapshot)
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            // Heavy parsing and command execution run off the main actor to keep UI responsive.
+            let computation = await Task.detached(priority: .utility) { () -> RefreshComputation in
+                let settingsStore = SettingsStore()
+                let settingsResult = settingsStore.loadSettingsWithDiagnostics()
+                let snapshotService = SnapshotService()
+                let snapshot = snapshotService.collectSnapshot(using: settingsResult.settings)
+
+                var mutableState = runtimeStateAtStart
+                let events = ThresholdEngine.evaluate(
+                    snapshot: snapshot,
+                    settings: settingsResult.settings,
+                    state: &mutableState,
+                    now: Date()
+                )
+                settingsStore.saveRuntimeState(mutableState)
+
+                return RefreshComputation(
+                    settings: settingsResult.settings,
+                    settingsWarnings: settingsResult.warnings,
+                    snapshot: snapshot,
+                    runtimeState: mutableState,
+                    events: events
+                )
+            }.value
+
+            self.applyRefreshComputation(computation, sendNotifications: sendNotifications)
+        }
+    }
+
+    private func applyRefreshComputation(_ computation: RefreshComputation, sendNotifications: Bool) {
+        currentSettings = computation.settings
+        settingsLoadWarnings = computation.settingsWarnings
+        currentSnapshot = computation.snapshot
+        runtimeState = computation.runtimeState
+
+        startOrUpdateTimer(snapshot: computation.snapshot)
+        updateStatusItemAppearance(with: computation.snapshot)
         refreshNotificationAuthorizationState()
-
-        var mutableState = runtimeState
-        let events = ThresholdEngine.evaluate(
-            snapshot: snapshot,
-            settings: currentSettings,
-            state: &mutableState,
-            now: Date()
-        )
-        runtimeState = mutableState
-        settingsStore.saveRuntimeState(runtimeState)
+        maybeRequestNotificationPermissionIfNeeded()
 
         if sendNotifications {
-            for event in events {
+            for event in computation.events {
                 notificationCoordinator.send(event: event, mode: currentSettings.notificationMode) { [weak self] result in
                     DispatchQueue.main.async {
                         self?.handleNotificationResult(result)
@@ -193,6 +235,13 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
         applyLaunchPreference()
         rebuildMenu()
+
+        refreshInFlight = false
+        if queuedRefreshWantsNotifications {
+            let queuedWantsNotifications = queuedRefreshWantsNotifications
+            queuedRefreshWantsNotifications = false
+            refreshSnapshot(sendNotifications: queuedWantsNotifications)
+        }
     }
 
     private func handleNotificationResult(_ result: NotificationSendResult) {
@@ -304,6 +353,12 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             menu.addItem(issueItem)
         }
 
+        for warning in (runtimeStateWarnings + settingsLoadWarnings) {
+            let warningItem = NSMenuItem(title: "Config warning: \(warning)", action: nil, keyEquivalent: "")
+            warningItem.isEnabled = false
+            menu.addItem(warningItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         if let snapshot = currentSnapshot {
@@ -357,7 +412,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func providerMenuItem(for snapshot: ProviderSnapshot) -> NSMenuItem {
-        let severity = visualSeverity(from: SeverityEvaluator.providerSeverity(for: snapshot))
+        let severity = visualSeverity(from: SeverityEvaluator.providerSeverity(for: snapshot, settings: currentSettings))
         let pressureText: String
 
         if let pressure = snapshot.pressurePercent {
@@ -402,8 +457,28 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func thresholdSummaryText() -> String {
-        let list = currentSettings.defaultThresholds.sorted().map(String.init).joined(separator: "/")
-        return list.isEmpty ? "none" : list
+        let defaults = currentSettings.defaultThresholds.sorted().map(String.init).joined(separator: "/")
+        let defaultText = defaults.isEmpty ? "none" : defaults
+
+        let overrideParts = currentSettings.perProviderThresholds
+            .filter { !$0.value.isEmpty }
+            .map { key, values in
+                let normalized = Array(Set(values.filter { (0...100).contains($0) })).sorted()
+                return (key, normalized.map(String.init).joined(separator: "/"))
+            }
+            .filter { !$0.1.isEmpty }
+            .sorted { $0.0 < $1.0 }
+
+        guard !overrideParts.isEmpty else {
+            return "default \(defaultText)"
+        }
+
+        let visible = overrideParts.prefix(2).map { "\($0.0)=\($0.1)" }.joined(separator: ", ")
+        let remainder = overrideParts.count - min(2, overrideParts.count)
+        if remainder > 0 {
+            return "default \(defaultText); overrides \(visible), +\(remainder) more"
+        }
+        return "default \(defaultText); overrides \(visible)"
     }
 
     private func resolveRefreshInterval(snapshot: GlobalSnapshot?) -> Int {
@@ -412,14 +487,50 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             return baseInterval
         }
 
-        let maxPressure = snapshot.providers.compactMap(\.pressurePercent).max() ?? 0
-        if maxPressure >= 95 {
+        let severities = snapshot.providers.map { SeverityEvaluator.providerSeverity(for: $0, settings: currentSettings) }
+        if severities.contains(.critical) {
             return 10
         }
-        if maxPressure >= 80 {
+        if severities.contains(.warning) {
             return min(baseInterval, 20)
         }
         return baseInterval
+    }
+
+    private func loadSettingsFromStore() {
+        let settingsResult = settingsStore.loadSettingsWithDiagnostics()
+        currentSettings = settingsResult.settings
+        settingsLoadWarnings = settingsResult.warnings
+    }
+
+    private func maybeRequestNotificationPermissionIfNeeded() {
+        guard requiresNotificationAuthorization(mode: currentSettings.notificationMode) else {
+            return
+        }
+
+        notificationCoordinator.refreshAuthorizationState { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                self.notificationStatusText = self.notificationCoordinator.authorizationSummaryText()
+                guard state == .notDetermined else {
+                    self.rebuildMenu()
+                    return
+                }
+
+                self.notificationCoordinator.requestPermissions { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.refreshNotificationAuthorizationState()
+                    }
+                }
+            }
+        }
+    }
+
+    private func requiresNotificationAuthorization(mode: NotificationMode) -> Bool {
+        mode == .banner || mode == .soundAndBanner
     }
 
     private func visualSeverity(from severity: SeverityLevel) -> VisualSeverity {
@@ -502,6 +613,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
         currentSettings.notificationMode = mode
         settingsStore.saveSettings(currentSettings)
+        maybeRequestNotificationPermissionIfNeeded()
         refreshNotificationAuthorizationState()
         rebuildMenu()
     }

@@ -17,6 +17,7 @@ import LimitLensCore
 enum CLIError: Error, LocalizedError {
     case unknownArgument(String)
     case missingValue(String)
+    case invalidValue(String, String)
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum CLIError: Error, LocalizedError {
             return "Unknown argument: \(value)"
         case .missingValue(let flag):
             return "Missing value for \(flag)"
+        case .invalidValue(let flag, let value):
+            return "Invalid value for \(flag): \(value)"
         }
     }
 }
@@ -54,7 +57,11 @@ struct CLIArguments {
                 guard index + 1 < values.count else {
                     throw CLIError.missingValue("--interval")
                 }
-                args.intervalSeconds = Int(values[index + 1])
+                let value = values[index + 1]
+                guard let parsed = Int(value), parsed > 0 else {
+                    throw CLIError.invalidValue("--interval", value)
+                }
+                args.intervalSeconds = parsed
                 index += 1
             case "--codex-path":
                 guard index + 1 < values.count else {
@@ -96,7 +103,11 @@ struct LimitLensCLI {
             }
 
             let settingsStore = SettingsStore()
-            var settings = settingsStore.loadSettings()
+            let settingsResult = settingsStore.loadSettingsWithDiagnostics()
+            var settings = settingsResult.settings
+            for warning in settingsResult.warnings {
+                fputs("warning: \(warning)\n", stderr)
+            }
 
             // CLI flags override persisted settings for this process execution.
             if let codexPath = arguments.codexPath {
@@ -108,7 +119,7 @@ struct LimitLensCLI {
             if let antigravityLogsPath = arguments.antigravityLogsPath {
                 settings.antigravityLogsPath = antigravityLogsPath
             }
-            if let interval = arguments.intervalSeconds, interval > 0 {
+            if let interval = arguments.intervalSeconds {
                 settings.refreshIntervalSeconds = interval
             }
 

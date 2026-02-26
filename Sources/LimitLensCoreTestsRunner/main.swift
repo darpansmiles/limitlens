@@ -85,6 +85,15 @@ private struct CoreTestsRunner {
             try Self.expect(signal == nil, "Expected nil when no rate-limit line exists")
         }
 
+        run("Rate-limit parser ignores noisy lines without trusted timestamps") {
+            let log = """
+            random telemetry 429 value
+            this mentions rate limit but has no timestamp
+            """
+            let signal = ProviderParsing.parseLatestRateLimitSignal(from: log, kind: "none")
+            try Self.expect(signal == nil, "Expected nil when timestamp is missing")
+        }
+
         run("Threshold engine triggers only on upward crossing") {
             var state = ThresholdRuntimeState.empty
             let settings = Self.makeSettings(defaultThresholds: [70, 75, 80], cooldownMinutes: 30)
@@ -112,7 +121,7 @@ private struct CoreTestsRunner {
                 state: &state,
                 now: now.addingTimeInterval(60)
             )
-            try Self.expect(higher.map(\.threshold) == [75, 80], "Expected 75 and 80 to trigger on upward crossing")
+            try Self.expect(higher.map(\.threshold) == [80], "Expected coalesced event at highest crossed threshold")
         }
 
         run("Threshold engine enforces cooldown and rearms after drop") {
@@ -174,6 +183,182 @@ private struct CoreTestsRunner {
 
             try Self.expect(events.isEmpty, "Expected no events when pressure is unavailable")
         }
+
+        run("Severity evaluator uses configured thresholds") {
+            var settings = Self.makeSettings(defaultThresholds: [50, 90], cooldownMinutes: 30)
+            settings.perProviderThresholds[ProviderName.claude.rawValue] = [40, 85]
+
+            let warningSnapshot = ProviderSnapshot(
+                provider: .codex,
+                confidence: .high,
+                currentUsagePercent: 52,
+                currentStatusSummary: "52%",
+                historicalSignals: [],
+                sourceFiles: [],
+                errors: []
+            )
+
+            let criticalSnapshot = ProviderSnapshot(
+                provider: .claude,
+                confidence: .high,
+                currentUsagePercent: 90,
+                currentStatusSummary: "90%",
+                historicalSignals: [],
+                sourceFiles: [],
+                errors: []
+            )
+
+            try Self.expect(
+                SeverityEvaluator.providerSeverity(for: warningSnapshot, settings: settings) == .warning,
+                "Expected warning at configured lower threshold"
+            )
+            try Self.expect(
+                SeverityEvaluator.providerSeverity(for: criticalSnapshot, settings: settings) == .critical,
+                "Expected critical at configured highest threshold"
+            )
+        }
+
+        run("Settings store preserves corrupt settings backup") {
+            let directory = try Self.makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let store = SettingsStore(rootDirectory: directory)
+            store.ensureStorageDirectory()
+
+            let corruptSettings = "{ not valid json ]"
+            let settingsURL = store.settingsFileURL()
+            try corruptSettings.write(to: settingsURL, atomically: true, encoding: .utf8)
+
+            let loaded = store.loadSettingsWithDiagnostics()
+            try Self.expect(!loaded.warnings.isEmpty, "Expected warnings for corrupt settings file")
+            try Self.expect(loaded.settings.defaultThresholds == LimitLensSettings.default.defaultThresholds, "Expected default settings after recovery")
+
+            let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            let hasBackup = entries.contains(where: { $0.hasPrefix("settings.corrupt.") && $0.hasSuffix(".json") })
+            try Self.expect(hasBackup, "Expected backup copy of corrupt settings file")
+        }
+
+        run("latestDirectory resolves by modification date") {
+            let directory = try Self.makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let older = directory.appendingPathComponent("z-old")
+            let newer = directory.appendingPathComponent("a-new")
+            try FileManager.default.createDirectory(at: older, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: newer, withIntermediateDirectories: true)
+
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: older.path)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: newer.path)
+
+            let latest = FileSystemSupport.latestDirectory(in: directory.path)
+            try Self.expect(latest?.lastPathComponent == "a-new", "Expected latest directory to follow mtime")
+        }
+
+        run("Claude adapter discovers logs across non-window1 directories") {
+            let directory = try Self.makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let logFile = directory
+                .appendingPathComponent("2026-02-25")
+                .appendingPathComponent("window2")
+                .appendingPathComponent("exthost")
+                .appendingPathComponent("Anthropic.claude-code")
+                .appendingPathComponent("Claude VSCode.log")
+
+            try FileManager.default.createDirectory(
+                at: logFile.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "2026-02-25 13:02:04.462 [info] autocompact: tokens=100 threshold=200".write(
+                to: logFile,
+                atomically: true,
+                encoding: .utf8
+            )
+
+            var settings = LimitLensSettings.default
+            settings.claudeProjectsPath = directory.path
+            settings.antigravityLogsPath = directory.path
+
+            let snapshot = ClaudeAdapter().collect(using: settings)
+            try Self.expect(snapshot.contextUsage?.tokens == 100, "Expected context parser to read window2 log")
+            try Self.expect(
+                snapshot.sourceFiles.contains(where: { URL(fileURLWithPath: $0).lastPathComponent == "Claude VSCode.log" }),
+                "Expected discovered source path to include Claude VSCode.log"
+            )
+        }
+
+        run("External command providers are loaded at runtime") {
+            let payload = #"{"confidence":"high","currentUsagePercent":64.5,"currentStatusSummary":"Runtime provider ok"}"#
+            let adapter = ExternalCommandProviderAdapter(
+                definition: ExternalProviderDefinition(
+                    id: "runtime_provider",
+                    displayName: "Runtime Provider",
+                    shortLabel: "Run",
+                    command: "/bin/echo",
+                    arguments: [payload],
+                    timeoutSeconds: 2
+                )
+            )
+
+            let snapshot = adapter.collect(using: .default)
+            try Self.expect(snapshot.provider.rawValue == "runtime_provider", "Expected custom provider ID")
+            try Self.expect(abs((snapshot.currentUsagePercent ?? 0) - 64.5) < 0.001, "Expected custom pressure from command payload")
+            try Self.expect(snapshot.currentStatusSummary == "Runtime provider ok", "Expected custom status summary")
+        }
+
+        run("External provider adapters require explicit allow flag and dedupe IDs") {
+            var settings = LimitLensSettings.default
+            settings.externalProviders = [
+                ExternalProviderDefinition(
+                    id: "dup",
+                    displayName: "Duplicate 1",
+                    shortLabel: "D1",
+                    command: "/bin/echo"
+                ),
+                ExternalProviderDefinition(
+                    id: "Dup",
+                    displayName: "Duplicate 2",
+                    shortLabel: "D2",
+                    command: "/bin/echo"
+                ),
+                ExternalProviderDefinition(
+                    id: "badcmd",
+                    displayName: "Bad Command",
+                    shortLabel: "Bad",
+                    command: "echo"
+                ),
+            ]
+
+            let disabled = ProviderRegistry.externalAdapters(for: settings, reservedIDs: [])
+            try Self.expect(disabled.isEmpty, "Expected external adapters disabled by default")
+
+            settings.allowExternalProviderCommands = true
+            let enabled = ProviderRegistry.externalAdapters(for: settings, reservedIDs: [])
+            try Self.expect(enabled.count == 1, "Expected one surviving external adapter after validation and dedupe")
+            try Self.expect(enabled.first?.descriptor.id == "dup", "Expected first duplicate ID to win")
+        }
+
+        run("Settings decode salvages valid fields when one field has wrong type") {
+            let directory = try Self.makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let store = SettingsStore(rootDirectory: directory)
+            store.ensureStorageDirectory()
+
+            let partialBadJSON = """
+            {
+              "codexSessionsPath": "~/custom-codex",
+              "refreshIntervalSeconds": "oops",
+              "defaultThresholds": [65, 85]
+            }
+            """
+            try partialBadJSON.write(to: store.settingsFileURL(), atomically: true, encoding: .utf8)
+
+            let loaded = store.loadSettingsWithDiagnostics()
+            try Self.expect(loaded.settings.codexSessionsPath == "~/custom-codex", "Expected valid codexSessionsPath to be preserved")
+            try Self.expect(loaded.settings.refreshIntervalSeconds == LimitLensSettings.default.refreshIntervalSeconds, "Expected invalid interval to fall back to default")
+            try Self.expect(loaded.settings.defaultThresholds == [65, 85], "Expected valid thresholds to remain intact")
+        }
     }
 
     private mutating func run(_ name: String, _ body: () throws -> Void) {
@@ -225,6 +410,13 @@ private struct CoreTestsRunner {
         settings.perProviderThresholds = [:]
         settings.notificationCooldownMinutes = cooldownMinutes
         return settings
+    }
+
+    private static func makeTemporaryDirectory() throws -> URL {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let path = base.appendingPathComponent("limitlens-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        return path
     }
 }
 

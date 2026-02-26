@@ -39,14 +39,22 @@ public enum SeverityLevel: String, Codable, Comparable, Sendable {
 public enum SeverityEvaluator {
     public static func providerSeverity(
         for snapshot: ProviderSnapshot,
+        settings: LimitLensSettings,
         now: Date = Date(),
         historicalSignalFreshnessSeconds: TimeInterval = 3_600
     ) -> SeverityLevel {
         if let pressure = snapshot.pressurePercent {
-            if pressure >= 95 {
+            let thresholds = settings.thresholds(for: snapshot.provider)
+            guard let warningThreshold = thresholds.first else {
+                return .normal
+            }
+
+            let criticalThreshold = thresholds.count >= 2 ? thresholds.last! : 101
+
+            if pressure >= Double(criticalThreshold) {
                 return .critical
             }
-            if pressure >= 80 {
+            if pressure >= Double(warningThreshold) {
                 return .warning
             }
             return .normal
@@ -62,11 +70,45 @@ public enum SeverityEvaluator {
 
     public static func globalSeverity(
         for snapshot: GlobalSnapshot,
+        settings: LimitLensSettings,
         now: Date = Date(),
         historicalSignalFreshnessSeconds: TimeInterval = 3_600
     ) -> SeverityLevel {
         snapshot.providers
-            .map { providerSeverity(for: $0, now: now, historicalSignalFreshnessSeconds: historicalSignalFreshnessSeconds) }
+            .map {
+                providerSeverity(
+                    for: $0,
+                    settings: settings,
+                    now: now,
+                    historicalSignalFreshnessSeconds: historicalSignalFreshnessSeconds
+                )
+            }
             .max() ?? .unknown
+    }
+
+    public static func providerSeverity(
+        for snapshot: ProviderSnapshot,
+        now: Date = Date(),
+        historicalSignalFreshnessSeconds: TimeInterval = 3_600
+    ) -> SeverityLevel {
+        providerSeverity(
+            for: snapshot,
+            settings: .default,
+            now: now,
+            historicalSignalFreshnessSeconds: historicalSignalFreshnessSeconds
+        )
+    }
+
+    public static func globalSeverity(
+        for snapshot: GlobalSnapshot,
+        now: Date = Date(),
+        historicalSignalFreshnessSeconds: TimeInterval = 3_600
+    ) -> SeverityLevel {
+        globalSeverity(
+            for: snapshot,
+            settings: .default,
+            now: now,
+            historicalSignalFreshnessSeconds: historicalSignalFreshnessSeconds
+        )
     }
 }

@@ -13,29 +13,48 @@ import Darwin
 import Foundation
 import LimitLensCore
 
-enum LaunchAtLoginResult {
+public enum LaunchAtLoginResult {
     case success
     case failure(String)
 }
 
-final class LaunchAtLoginManager {
-    private let fileManager = FileManager.default
-    private let label = "com.limitlens.menubar"
-    private let userID = String(getuid())
+public final class LaunchAtLoginManager {
+    public typealias CommandRunner = (_ executable: String, _ arguments: [String]) -> ProcessResult
 
-    var launchAgentURL: URL {
-        let home = fileManager.homeDirectoryForCurrentUser
-        return home
+    private let fileManager: FileManager
+    private let homeDirectory: URL
+    private let label: String
+    private let userID: String
+    private let commandRunner: CommandRunner
+
+    public init(
+        fileManager: FileManager = .default,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        label: String = "com.limitlens.menubar",
+        userID: String = String(getuid()),
+        commandRunner: @escaping CommandRunner = { executable, arguments in
+            ProcessSupport.run(executable: executable, arguments: arguments)
+        }
+    ) {
+        self.fileManager = fileManager
+        self.homeDirectory = homeDirectory
+        self.label = label
+        self.userID = userID
+        self.commandRunner = commandRunner
+    }
+
+    public var launchAgentURL: URL {
+        homeDirectory
             .appendingPathComponent("Library")
             .appendingPathComponent("LaunchAgents")
             .appendingPathComponent("\(label).plist")
     }
 
-    func isEnabled() -> Bool {
+    public func isEnabled() -> Bool {
         fileManager.fileExists(atPath: launchAgentURL.path)
     }
 
-    func setEnabled(_ enabled: Bool, executablePath: String?) -> LaunchAtLoginResult {
+    public func setEnabled(_ enabled: Bool, executablePath: String?) -> LaunchAtLoginResult {
         if enabled {
             guard let executablePath else {
                 return .failure("No stable executable path is available for launch-at-login.")
@@ -60,9 +79,9 @@ final class LaunchAtLoginManager {
             "RunAtLoad": true,
             "KeepAlive": false,
             // This keeps logs discoverable while debugging startup behavior.
-            "StandardOutPath": fileManager.homeDirectoryForCurrentUser
+            "StandardOutPath": homeDirectory
                 .appendingPathComponent("Library/Logs/LimitLens.launchd.log").path,
-            "StandardErrorPath": fileManager.homeDirectoryForCurrentUser
+            "StandardErrorPath": homeDirectory
                 .appendingPathComponent("Library/Logs/LimitLens.launchd.err.log").path,
         ]
 
@@ -81,15 +100,9 @@ final class LaunchAtLoginManager {
         }
 
         // We boot out first so repeated updates replace older registration cleanly.
-        _ = ProcessSupport.run(
-            executable: "launchctl",
-            arguments: ["bootout", "gui/\(userID)", launchAgentURL.path]
-        )
+        _ = runLaunchctl(arguments: ["bootout", "gui/\(userID)", launchAgentURL.path])
 
-        let bootstrap = ProcessSupport.run(
-            executable: "launchctl",
-            arguments: ["bootstrap", "gui/\(userID)", launchAgentURL.path]
-        )
+        let bootstrap = runLaunchctl(arguments: ["bootstrap", "gui/\(userID)", launchAgentURL.path])
 
         guard bootstrap.exitCode == 0 else {
             let errorText = bootstrap.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -100,10 +113,7 @@ final class LaunchAtLoginManager {
     }
 
     private func removeLaunchAgent() -> LaunchAtLoginResult {
-        _ = ProcessSupport.run(
-            executable: "launchctl",
-            arguments: ["bootout", "gui/\(userID)", launchAgentURL.path]
-        )
+        _ = runLaunchctl(arguments: ["bootout", "gui/\(userID)", launchAgentURL.path])
 
         if fileManager.fileExists(atPath: launchAgentURL.path) {
             do {
@@ -114,5 +124,9 @@ final class LaunchAtLoginManager {
         }
 
         return .success
+    }
+
+    private func runLaunchctl(arguments: [String]) -> ProcessResult {
+        commandRunner("launchctl", arguments)
     }
 }

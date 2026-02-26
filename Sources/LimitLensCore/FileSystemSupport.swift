@@ -18,7 +18,7 @@ public enum FileSystemSupport {
         let rootURL = URL(fileURLWithPath: rootPath)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: rootURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
             return nil
@@ -28,6 +28,23 @@ public enum FileSystemSupport {
             (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
         }
 
+        var latestURL: URL?
+        var latestMtime = Date.distantPast
+
+        for candidate in directoryURLs {
+            let values = try? candidate.resourceValues(forKeys: [.contentModificationDateKey])
+            let mtime = values?.contentModificationDate ?? .distantPast
+            if mtime > latestMtime {
+                latestMtime = mtime
+                latestURL = candidate
+            }
+        }
+
+        if let latestURL {
+            return latestURL
+        }
+
+        // If timestamps were unavailable, fall back to deterministic lexicographic order.
         return directoryURLs.sorted(by: { $0.lastPathComponent > $1.lastPathComponent }).first
     }
 

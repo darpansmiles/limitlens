@@ -13,15 +13,18 @@ This file talks to adapter implementations to collect provider snapshots and ret
 import Foundation
 
 public struct SnapshotService {
-    private let adapters: [any ProviderAdapter]
+    private let builtInAdapters: [any ProviderAdapter]
 
-    public init(adapters: [any ProviderAdapter] = ProviderRegistry.defaultAdapters()) {
-        self.adapters = adapters
+    public init(adapters: [any ProviderAdapter] = ProviderRegistry.builtInAdapters()) {
+        self.builtInAdapters = adapters
     }
 
     public func collectSnapshot(using settings: LimitLensSettings, now: Date = Date()) -> GlobalSnapshot {
+        let reservedIDs = Set(builtInAdapters.map(\.descriptor.id))
+        let allAdapters = builtInAdapters + ProviderRegistry.externalAdapters(for: settings, reservedIDs: reservedIDs)
+
         // Each provider is read independently so one parser failure cannot block the others.
-        let collected = adapters.map { adapter in
+        let collected = allAdapters.map { adapter in
             adapter.collect(using: settings)
         }
 

@@ -15,7 +15,7 @@ import Foundation
 import LimitLensCore
 import UserNotifications
 
-enum NotificationSendResult {
+public enum NotificationSendResult: Sendable {
     case sent
     case skippedDisabled
     case soundOnly
@@ -23,7 +23,7 @@ enum NotificationSendResult {
     case failed(String)
 }
 
-enum NotificationAuthorizationState: String {
+public enum NotificationAuthorizationState: String, Sendable {
     case notDetermined = "not-determined"
     case denied = "denied"
     case authorized = "authorized"
@@ -32,12 +32,21 @@ enum NotificationAuthorizationState: String {
     case unknown = "unknown"
 }
 
-@MainActor
-final class NotificationCoordinator {
-    private let center = UNUserNotificationCenter.current()
-    private(set) var authorizationState: NotificationAuthorizationState = .notDetermined
+public enum NotificationDeliveryPlan: Equatable, Sendable {
+    case skip
+    case soundOnly
+    case blocked
+    case banner(withSound: Bool)
+}
 
-    func requestPermissions(completion: (@Sendable (NotificationAuthorizationState) -> Void)? = nil) {
+@MainActor
+public final class NotificationCoordinator {
+    private let center = UNUserNotificationCenter.current()
+    public private(set) var authorizationState: NotificationAuthorizationState = .notDetermined
+
+    public init() {}
+
+    public func requestPermissions(completion: (@Sendable (NotificationAuthorizationState) -> Void)? = nil) {
         // We request both alert and sound so users can switch modes without re-prompt loops.
         center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] _, _ in
             Task { @MainActor in
@@ -46,7 +55,7 @@ final class NotificationCoordinator {
         }
     }
 
-    func refreshAuthorizationState(completion: (@Sendable (NotificationAuthorizationState) -> Void)? = nil) {
+    public func refreshAuthorizationState(completion: (@Sendable (NotificationAuthorizationState) -> Void)? = nil) {
         center.getNotificationSettings { [weak self] settings in
             let mapped = Self.mapStatus(settings.authorizationStatus)
             Task { @MainActor in
@@ -56,29 +65,23 @@ final class NotificationCoordinator {
         }
     }
 
-    func send(event: ThresholdEvent, mode: NotificationMode, completion: (@Sendable (NotificationSendResult) -> Void)? = nil) {
-        switch mode {
-        case .off:
+    public func send(event: ThresholdEvent, mode: NotificationMode, completion: (@Sendable (NotificationSendResult) -> Void)? = nil) {
+        let deliveryPlan = Self.deliveryPlan(mode: mode, authorizationState: authorizationState)
+
+        switch deliveryPlan {
+        case .skip:
             completion?(.skippedDisabled)
             return
-        case .sound:
+        case .soundOnly:
             // Sound-only mode intentionally avoids NotificationCenter banners.
             NSSound.beep()
             completion?(.soundOnly)
             return
-        case .banner, .soundAndBanner:
-            break
-        }
-
-        if authorizationState == .denied {
-            // If banners are blocked, sound+banner still degrades to sound so users get a signal.
-            if mode == .soundAndBanner {
-                NSSound.beep()
-                completion?(.soundOnly)
-            } else {
-                completion?(.blockedByPermission)
-            }
+        case .blocked:
+            completion?(.blockedByPermission)
             return
+        case .banner:
+            break
         }
 
         let content = UNMutableNotificationContent()
@@ -86,7 +89,7 @@ final class NotificationCoordinator {
         content.subtitle = event.provider.defaultDisplayName
         content.body = "Crossed \(event.threshold)% at \(String(format: "%.2f", event.observedPercent))%."
 
-        if mode == .soundAndBanner {
+        if case .banner(let withSound) = deliveryPlan, withSound {
             content.sound = .default
         }
 
@@ -107,7 +110,7 @@ final class NotificationCoordinator {
         }
     }
 
-    func authorizationSummaryText() -> String {
+    public func authorizationSummaryText() -> String {
         switch authorizationState {
         case .authorized, .provisional, .ephemeral:
             return "Allowed"
@@ -117,6 +120,33 @@ final class NotificationCoordinator {
             return "Not Determined"
         case .unknown:
             return "Unknown"
+        }
+    }
+
+    nonisolated public static func deliveryPlan(
+        mode: NotificationMode,
+        authorizationState: NotificationAuthorizationState
+    ) -> NotificationDeliveryPlan {
+        switch mode {
+        case .off:
+            return .skip
+        case .sound:
+            return .soundOnly
+        case .banner:
+            switch authorizationState {
+            case .authorized, .provisional, .ephemeral:
+                return .banner(withSound: false)
+            case .denied, .notDetermined, .unknown:
+                return .blocked
+            }
+        case .soundAndBanner:
+            switch authorizationState {
+            case .authorized, .provisional, .ephemeral:
+                return .banner(withSound: true)
+            case .denied, .notDetermined, .unknown:
+                // We keep sound so users still get a local signal while banner auth is unavailable.
+                return .soundOnly
+            }
         }
     }
 

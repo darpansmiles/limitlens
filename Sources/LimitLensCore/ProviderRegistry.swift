@@ -32,7 +32,7 @@ public enum ProviderRegistry {
         )
     }
 
-    public static func defaultAdapters() -> [any ProviderAdapter] {
+    public static func builtInAdapters() -> [any ProviderAdapter] {
         // This list is the only place built-in adapter composition is declared.
         [
             CodexAdapter(),
@@ -41,9 +41,60 @@ public enum ProviderRegistry {
         ]
     }
 
+    public static func adapters(for settings: LimitLensSettings) -> [any ProviderAdapter] {
+        let builtIns = builtInAdapters()
+        return builtIns + externalAdapters(for: settings, reservedIDs: Set(builtIns.map(\.descriptor.id)))
+    }
+
+    public static func externalAdapters(
+        for settings: LimitLensSettings,
+        reservedIDs: Set<String>
+    ) -> [any ProviderAdapter] {
+        guard settings.allowExternalProviderCommands else {
+            return []
+        }
+
+        var adapters: [any ProviderAdapter] = []
+        var claimedIDs = Set(reservedIDs.map { $0.lowercased() })
+        let fileManager = FileManager.default
+
+        for definition in settings.externalProviders {
+            let id = definition.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let command = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !id.isEmpty, !command.isEmpty else {
+                continue
+            }
+
+            guard isValidProviderID(id) else {
+                continue
+            }
+
+            let dedupeID = id.lowercased()
+            // First entry wins to keep duplicate ID behavior deterministic.
+            guard !claimedIDs.contains(dedupeID) else {
+                continue
+            }
+
+            // External commands must be absolute and executable to reduce injection risk.
+            guard command.hasPrefix("/"), fileManager.isExecutableFile(atPath: command) else {
+                continue
+            }
+
+            adapters.append(ExternalCommandProviderAdapter(definition: definition))
+            claimedIDs.insert(dedupeID)
+        }
+
+        return adapters
+    }
+
     public static func sortSnapshots(_ snapshots: [ProviderSnapshot]) -> [ProviderSnapshot] {
         snapshots.sorted { lhs, rhs in
             lhs.provider < rhs.provider
         }
     }
+}
+
+private func isValidProviderID(_ id: String) -> Bool {
+    regexCaptureGroups(pattern: "^[a-z0-9][a-z0-9._-]*$", in: id.lowercased()) != nil
 }

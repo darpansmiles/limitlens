@@ -173,17 +173,18 @@ public struct ClaudeAdapter: ProviderAdapter {
     }
 
     private func resolveClaudeLogFile(antigravityLogsRoot: String) -> URL? {
-        guard let latestLogDirectory = FileSystemSupport.latestDirectory(in: antigravityLogsRoot) else {
-            return nil
-        }
+        FileSystemSupport.latestFile(
+            in: antigravityLogsRoot,
+            matching: { fileURL in
+                guard fileURL.lastPathComponent == "Claude VSCode.log" else {
+                    return false
+                }
 
-        let logPath = latestLogDirectory
-            .appendingPathComponent("window1")
-            .appendingPathComponent("exthost")
-            .appendingPathComponent("Anthropic.claude-code")
-            .appendingPathComponent("Claude VSCode.log")
-
-        return FileManager.default.fileExists(atPath: logPath.path) ? logPath : nil
+                let path = fileURL.path.lowercased()
+                // We intentionally scan all `window*` folders, not only `window1`.
+                return path.contains("/exthost/anthropic.claude-code/")
+            }
+        )
     }
 
     private func extractClaudeContextUsage(from fileURL: URL) -> ContextUsage? {
@@ -264,21 +265,121 @@ public struct AntigravityAdapter: ProviderAdapter {
     }
 
     private func resolveCodexExtensionLog(antigravityLogsRoot: String) -> URL? {
-        guard let latestLogDirectory = FileSystemSupport.latestDirectory(in: antigravityLogsRoot) else {
-            return nil
+        FileSystemSupport.latestFile(
+            in: antigravityLogsRoot,
+            matching: { fileURL in
+                guard fileURL.lastPathComponent == "Codex.log" else {
+                    return false
+                }
+
+                let path = fileURL.path.lowercased()
+                // Different extension variants can emit Codex.log, so we match by host path.
+                return path.contains("/exthost/")
+            }
+        )
+    }
+}
+
+public struct ExternalCommandProviderAdapter: ProviderAdapter {
+    private struct ExternalSnapshotPayload: Decodable {
+        let confidence: ConfidenceLevel?
+        let currentUsagePercent: Double?
+        let windowResetAt: Date?
+        let tokenUsage: TokenUsage?
+        let contextUsage: ContextUsage?
+        let appVersion: String?
+        let extraUsageEnabled: Bool?
+        let currentStatusSummary: String?
+        let historicalSignals: [HistoricalSignal]?
+        let sourceFiles: [String]?
+        let errors: [String]?
+    }
+
+    public let descriptor: ProviderDescriptor
+    private let definition: ExternalProviderDefinition
+
+    public init(definition: ExternalProviderDefinition) {
+        let id = definition.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = definition.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shortLabel = definition.shortLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.descriptor = ProviderDescriptor(
+            id: id,
+            displayName: displayName.isEmpty ? ProviderName(rawValue: id).defaultDisplayName : displayName,
+            shortLabel: shortLabel.isEmpty ? String((displayName.isEmpty ? id : displayName).prefix(3)) : shortLabel
+        )
+        self.definition = definition
+    }
+
+    public func collect(using settings: LimitLensSettings) -> ProviderSnapshot {
+        let provider = ProviderName(rawValue: descriptor.id)
+        let timeoutSeconds = TimeInterval(max(1, definition.timeoutSeconds))
+        let result = ProcessSupport.run(
+            executable: definition.command,
+            arguments: definition.arguments,
+            timeoutSeconds: timeoutSeconds
+        )
+
+        guard result.exitCode == 0 else {
+            return ProviderSnapshot(
+                provider: provider,
+                providerDisplayName: descriptor.displayName,
+                providerShortLabel: descriptor.shortLabel,
+                confidence: .unavailable,
+                currentStatusSummary: "External adapter command failed.",
+                sourceFiles: [],
+                errors: [result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).ifEmpty("Command exited with status \(result.exitCode).")]
+            )
         }
 
-        let logPath = latestLogDirectory
-            .appendingPathComponent("window1")
-            .appendingPathComponent("exthost")
-            .appendingPathComponent("openai.chatgpt")
-            .appendingPathComponent("Codex.log")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
 
-        return FileManager.default.fileExists(atPath: logPath.path) ? logPath : nil
+        guard
+            let payloadData = result.stdout.data(using: .utf8),
+            let payload = try? decoder.decode(ExternalSnapshotPayload.self, from: payloadData)
+        else {
+            return ProviderSnapshot(
+                provider: provider,
+                providerDisplayName: descriptor.displayName,
+                providerShortLabel: descriptor.shortLabel,
+                confidence: .unavailable,
+                currentStatusSummary: "External adapter output is not valid JSON snapshot payload.",
+                sourceFiles: [],
+                errors: ["Expected JSON on stdout for provider \(descriptor.id)."]
+            )
+        }
+
+        let pressure = payload.currentUsagePercent.map(safePercent)
+        let summary = payload.currentStatusSummary?.trimmingCharacters(in: .whitespacesAndNewlines).ifEmpty(
+            pressure.map { "\(String(format: "%.2f", $0))% used" } ?? "External adapter reported metrics."
+        ) ?? "External adapter reported metrics."
+
+        return ProviderSnapshot(
+            provider: provider,
+            providerDisplayName: descriptor.displayName,
+            providerShortLabel: descriptor.shortLabel,
+            confidence: payload.confidence ?? (pressure == nil ? .medium : .high),
+            currentUsagePercent: pressure,
+            windowResetAt: payload.windowResetAt,
+            tokenUsage: payload.tokenUsage,
+            contextUsage: payload.contextUsage,
+            appVersion: payload.appVersion,
+            extraUsageEnabled: payload.extraUsageEnabled,
+            currentStatusSummary: summary,
+            historicalSignals: payload.historicalSignals ?? [],
+            sourceFiles: payload.sourceFiles ?? [],
+            errors: payload.errors ?? []
+        )
     }
 }
 
 private func extractRateLimitSignal(from fileURL: URL, kind: String) -> HistoricalSignal? {
     let tail = FileSystemSupport.readTail(from: fileURL, maxBytes: 1_048_576)
     return ProviderParsing.parseLatestRateLimitSignal(from: tail, kind: kind)
+}
+
+private extension String {
+    func ifEmpty(_ fallback: String) -> String {
+        isEmpty ? fallback : self
+    }
 }

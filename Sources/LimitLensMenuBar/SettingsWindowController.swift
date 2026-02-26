@@ -40,6 +40,7 @@ final class SettingsWindowController: NSWindowController {
 
     private let notificationModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let allowExternalCommandsCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let additionalOverrideNote = NSTextField(labelWithString: "")
 
     init(settings: LimitLensSettings, onSave: @escaping (LimitLensSettings) -> Void) {
@@ -108,6 +109,10 @@ final class SettingsWindowController: NSWindowController {
         permissionNote.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         permissionNote.textColor = .secondaryLabelColor
 
+        let externalCommandNote = NSTextField(labelWithString: "External provider commands execute local binaries from settings.json; enable only for trusted commands.")
+        externalCommandNote.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        externalCommandNote.textColor = .secondaryLabelColor
+
         let buttonBar = makeButtonBar()
 
         container.addArrangedSubview(titleLabel)
@@ -115,6 +120,7 @@ final class SettingsWindowController: NSWindowController {
         container.addArrangedSubview(formGrid)
         container.addArrangedSubview(additionalOverrideNote)
         container.addArrangedSubview(permissionNote)
+        container.addArrangedSubview(externalCommandNote)
         container.addArrangedSubview(buttonBar)
 
         root.addSubview(container)
@@ -145,6 +151,7 @@ final class SettingsWindowController: NSWindowController {
             [label("Threshold Tools"), makeThresholdToolsRow()],
             [label("Notification Mode"), notificationModePopup],
             [label("Launch At Login"), launchAtLoginCheckbox],
+            [label("Enable External Provider Commands"), allowExternalCommandsCheckbox],
         ])
 
         grid.translatesAutoresizingMaskIntoConstraints = false
@@ -288,6 +295,7 @@ final class SettingsWindowController: NSWindowController {
         }
 
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
+        allowExternalCommandsCheckbox.state = settings.allowExternalProviderCommands ? .on : .off
 
         let additionalCount = settings.perProviderThresholds.keys.filter { !builtInProviderIDs.contains($0) }.count
         additionalOverrideNote.stringValue = "Additional provider overrides preserved: \(additionalCount)"
@@ -353,6 +361,7 @@ final class SettingsWindowController: NSWindowController {
         updated.perProviderThresholds = providerThresholds
         updated.notificationMode = mode
         updated.launchAtLogin = (launchAtLoginCheckbox.state == .on)
+        updated.allowExternalProviderCommands = (allowExternalCommandsCheckbox.state == .on)
 
         onSave(updated)
         window?.close()

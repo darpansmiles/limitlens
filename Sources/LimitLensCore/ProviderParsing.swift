@@ -145,20 +145,21 @@ public enum ProviderParsing {
 
     public static func parseLatestRateLimitSignal(
         from logTail: String,
-        kind: String,
-        fallbackDate: Date = Date()
+        kind: String
     ) -> HistoricalSignal? {
         let lines = logTail.split(whereSeparator: \.isNewline)
 
         // Rate-limit evidence is historical, so the latest matching line is sufficient.
         for lineSlice in lines.reversed() {
             let line = String(lineSlice)
-            let lower = line.lowercased()
-            guard lower.contains("429") || lower.contains("rate_limit") || lower.contains("rate limit") else {
+            guard isRateLimitEvidenceLine(line) else {
                 continue
             }
 
-            let observedAt = parseLogTimestamp(from: line) ?? fallbackDate
+            // We require an explicit timestamp so signal freshness stays trustworthy.
+            guard let observedAt = parseLogTimestamp(from: line) else {
+                continue
+            }
             return HistoricalSignal(kind: kind, observedAt: observedAt, details: line)
         }
 
@@ -221,4 +222,25 @@ private func parseJSONLine(_ line: String) -> JSONLine? {
     }
 
     return JSONLine(storage: object)
+}
+
+private func isRateLimitEvidenceLine(_ line: String) -> Bool {
+    let lower = line.lowercased()
+
+    if lower.contains("rate_limit") || lower.contains("rate limit") || lower.contains("ratelimit") {
+        return true
+    }
+    if lower.contains("too many requests") || lower.contains("quota exceeded") {
+        return true
+    }
+
+    guard regexCaptureGroups(pattern: "\\b429\\b", in: lower) != nil else {
+        return false
+    }
+
+    // A bare number is noisy; we only trust 429 lines with HTTP/request semantics.
+    return lower.contains("http") ||
+        lower.contains("request") ||
+        lower.contains("response") ||
+        lower.contains("status")
 }

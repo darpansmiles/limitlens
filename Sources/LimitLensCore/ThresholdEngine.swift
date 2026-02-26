@@ -32,6 +32,7 @@ public enum ThresholdEngine {
             let providerKey = provider.rawValue
             let currentPercent = safePercent(pressure)
             let previousPercent = state.lastPercentByProvider[providerKey] ?? -1
+            var crossedThresholds: [Int] = []
 
             // We only trigger on upward crossing so steady high values do not retrigger.
             for threshold in settings.thresholds(for: provider) {
@@ -48,15 +49,24 @@ public enum ThresholdEngine {
                     }
                 }
 
+                crossedThresholds.append(threshold)
+            }
+
+            if let highestCrossedThreshold = crossedThresholds.max() {
+                // Large jumps are coalesced into one highest-severity event per refresh tick.
                 events.append(
                     ThresholdEvent(
                         provider: provider,
-                        threshold: threshold,
+                        threshold: highestCrossedThreshold,
                         observedPercent: currentPercent,
                         triggeredAt: now
                     )
                 )
-                state.lastNotifiedByProviderThreshold[stateKey] = now
+
+                for threshold in crossedThresholds {
+                    let stateKey = providerThresholdKey(provider: provider, threshold: threshold)
+                    state.lastNotifiedByProviderThreshold[stateKey] = now
+                }
             }
 
             // Updating this baseline enables natural hysteresis through crossing checks.

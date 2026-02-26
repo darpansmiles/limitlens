@@ -30,13 +30,23 @@ public func expandHomePath(_ value: String) -> String {
 }
 
 public func parseLogTimestamp(from line: String) -> Date? {
-    // We only accept timestamps at the beginning of a line to avoid false positives.
-    let prefixCount = "yyyy-MM-dd HH:mm:ss.SSS".count
-    guard line.count >= prefixCount else {
-        return nil
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if let groups = regexCaptureGroups(
+        pattern: "^\\[?(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\]?",
+        in: trimmed
+    ), let raw = groups.first {
+        return makeLogTimestampFormatter().date(from: raw)
     }
-    let prefix = String(line.prefix(prefixCount))
-    return makeLogTimestampFormatter().date(from: prefix)
+
+    if let groups = regexCaptureGroups(
+        pattern: "^\\[?(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z)\\]?",
+        in: trimmed
+    ), let rawISO = groups.first {
+        return makeISOFormatter().date(from: rawISO) ?? makePlainISOFormatter().date(from: rawISO)
+    }
+
+    return nil
 }
 
 public func iso8601(_ date: Date) -> String {
@@ -116,5 +126,11 @@ private func makeLogTimestampFormatter() -> DateFormatter {
 private func makeISOFormatter() -> ISO8601DateFormatter {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}
+
+private func makePlainISOFormatter() -> ISO8601DateFormatter {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
     return formatter
 }
