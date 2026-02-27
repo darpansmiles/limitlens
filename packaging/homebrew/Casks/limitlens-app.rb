@@ -3,7 +3,7 @@
 
 cask "limitlens-app" do
   version "0.5.0"
-  sha256 "ab6490cbc0fb49ad4b27af70a6adfcfd12351af08357a048a38d267b011d4ba4"
+  sha256 "50ee1d2b0210e8b720803762c54970ed22c2caa86d2021d2358b41e785ab799f"
 
   url "https://github.com/darpansmiles/limitlens/releases/download/v#{version}/LimitLens-#{version}.dmg"
   name "LimitLens"

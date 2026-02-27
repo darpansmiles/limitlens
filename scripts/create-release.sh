@@ -89,12 +89,21 @@ if [[ "${PRERELEASE}" -eq 1 ]]; then
   FLAGS+=(--prerelease)
 fi
 
-gh release create "${TAG}" \
-  --target "${TARGET}" \
-  --title "LimitLens ${VERSION}" \
-  --notes-file "${NOTES_FILE}" \
-  "${CLI_TARBALL}" \
-  "${DMG_FILE}" \
-  "${FLAGS[@]}"
+if [[ ${#FLAGS[@]} -gt 0 ]]; then
+  gh release create "${TAG}" \
+    --target "${TARGET}" \
+    --title "LimitLens ${VERSION}" \
+    --notes-file "${NOTES_FILE}" \
+    "${CLI_TARBALL}" \
+    "${DMG_FILE}" \
+    "${FLAGS[@]}"
+else
+  gh release create "${TAG}" \
+    --target "${TARGET}" \
+    --title "LimitLens ${VERSION}" \
+    --notes-file "${NOTES_FILE}" \
+    "${CLI_TARBALL}" \
+    "${DMG_FILE}"
+fi
 
 echo "[release] Created ${TAG}."

@@ -6,7 +6,7 @@ class Limitlens < Formula
   homepage "https://github.com/darpansmiles/limitlens"
   version "0.5.0"
   url "https://github.com/darpansmiles/limitlens/releases/download/v#{version}/limitlens-#{version}-universal.tar.gz"
-  sha256 "68029bdb7edfd0e6cba1e3876c156c785611a57f3021f8987b6a31eb8c877764"
+  sha256 "731f12d20b675f7299fdf38ca116996dbd5d493e222ce7dfdb8a03216e8cd2ca"
   license "MIT"
 
   depends_on macos: :ventura
