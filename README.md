@@ -9,15 +9,15 @@ It ships as one Swift package with four executables:
 - `limitlens-core-tests` for parser and threshold unit checks.
 - `limitlens-menubar-tests` for launch/notification support checks.
 
-## Milestone Status
+## Visual Overview
 
-Milestones 1, 2, 3, and 4 are implemented:
+![Menu bar indicator in green state](docs/images/menubar-green.png)
 
-- Shared core adapter + normalization engine.
-- Native CLI with human mode, JSON mode, watch mode, and path overrides.
-- Native menu bar app with adaptive refresh, threshold alerts, launch-at-login, and a built-in settings window.
-- Portable unit-test harness with fixture-driven parser checks and threshold crossing/cooldown checks.
-- Milestone 4 hardening: runtime provider extensibility, threshold-aligned severity semantics, permission-intent notifications, robust launch-at-login reporting, universal-binary install flow, install/uninstall/doctor scripts, and CI workflow.
+![Dropdown panel with provider rows](docs/images/dropdown-panel.png)
+
+![CLI snapshot output](docs/images/cli-output.png)
+
+![Pressure transition from green to amber](docs/images/pressure-transition.gif)
 
 ## Requirements
 
@@ -27,19 +27,34 @@ Milestones 1, 2, 3, and 4 are implemented:
 ## Build
 
 ```bash
-cd /Users/darpan/Documents/Personal/antigravity/limitlens
+git clone https://github.com/darpansmiles/limitlens.git
+cd limitlens
 swift build
 ```
 
-## Install (Local Machine)
+## Install
 
-Install CLI tools + macOS app bundle:
+### Local install (universal binaries)
 
 ```bash
 bash ./scripts/install.sh
 ```
 
-`install.sh` builds universal binaries (`arm64` + `x86_64`) before installing, so the installed app and CLI are processor-agnostic.
+This builds `arm64` + `x86_64` binaries, merges them, installs CLI commands under `~/.local/bin`, and installs `LimitLens.app` under `~/Applications`.
+
+### Unsigned install fallback
+
+```bash
+bash ./scripts/install.sh --unsigned
+```
+
+### Signed install
+
+```bash
+bash ./scripts/install.sh \
+  --sign-identity "Developer ID Application: Example, Inc." \
+  --notarize-profile "limitlens-notary"
+```
 
 Uninstall:
 
@@ -51,14 +66,6 @@ Environment doctor:
 
 ```bash
 bash ./scripts/doctor.sh
-```
-
-NPM shortcuts:
-
-```bash
-npm run limits:install
-npm run limits:uninstall
-npm run limits:doctor
 ```
 
 ## CLI Usage
@@ -84,8 +91,13 @@ swift run limitlens --watch --interval 30
 Override source paths for a run:
 
 ```bash
-swift run limitlens --codex-path ~/.codex/sessions --claude-path ~/.claude/projects --antigravity-logs-path "~/Library/Application Support/Antigravity/logs"
+swift run limitlens \
+  --codex-path ~/.codex/sessions \
+  --claude-path ~/.claude/projects \
+  --antigravity-logs-path "~/Library/Application Support/Antigravity/logs"
 ```
+
+First run prints a boxed onboarding summary once and then persists that completion in `runtime_state.json`.
 
 ## Menu Bar App Usage
 
@@ -97,32 +109,54 @@ swift run LimitLensMenuBar
 
 The app appears in the macOS menu bar and provides:
 
-- Severity-colored top-bar status using a shared severity policy.
-- Provider health lines with pressure/signal context.
-- In-app settings window for paths, thresholds, notification mode, cooldown, and launch-at-login.
-- In-app settings toggle to explicitly allow or block runtime external provider commands.
-- Permission-aware notification status feedback.
-- Deep-link to macOS notification settings.
+- Severity-colored top-bar status using shared threshold semantics.
+- Provider rows with pressure, rate-limit evidence, and source-health markers.
+- First-launch welcome block with provider detection and quick path configuration.
+- `⚠ Fix` actions for provider source issues that open settings focused on the right path.
+- In-app settings for paths, thresholds, notification mode, cooldown, and launch-at-login.
+
+## DMG Packaging
+
+Build a versioned DMG containing `LimitLens.app` and an `Applications` shortcut:
+
+```bash
+bash ./scripts/build-dmg.sh --version 0.5.0 --unsigned
+```
+
+Signed/notarized DMG flow:
+
+```bash
+bash ./scripts/build-dmg.sh \
+  --version 0.5.0 \
+  --sign-identity "Developer ID Application: Example, Inc." \
+  --notarize-profile "limitlens-notary"
+```
+
+Output file pattern: `dist/LimitLens-<version>.dmg`.
+
+## Homebrew
+
+Planned tap commands:
+
+```bash
+brew install <owner>/tap/limitlens
+brew install --cask <owner>/tap/limitlens-app
+```
+
+Tap assets and formula templates are under `packaging/homebrew`.
 
 ## Unit Tests
 
-Run core parser and threshold tests:
+Core parser and threshold checks:
 
 ```bash
 swift run limitlens-core-tests
 ```
 
-Run menu-bar support lifecycle and notification-policy tests:
+Menu support lifecycle/notification checks:
 
 ```bash
 swift run limitlens-menubar-tests
-```
-
-NPM shortcut:
-
-```bash
-npm run limits:test
-npm run limits:test:menu
 ```
 
 ## Settings and Permissions
@@ -132,8 +166,11 @@ Settings are stored in:
 - `~/Library/Application Support/LimitLens/settings.json`
 - `~/Library/Application Support/LimitLens/runtime_state.json`
 
-Notification permission is required for banner/sound notification modes.
-Permission prompts are intent-based: LimitLens only requests notification authorization when the selected mode needs banners.
+Runtime permissions and OS integration:
+
+- Notifications permission is required for banner-based alerts.
+- Local file access to provider paths is required for usage extraction.
+- Launch-at-login uses a user LaunchAgent (`~/Library/LaunchAgents/com.limitlens.menubar.plist`).
 
 Defaults:
 
@@ -141,21 +178,17 @@ Defaults:
 - Launch at login: enabled
 - Notification mode: `sound+banner`
 
-Runtime provider definitions can be added in `settings.json` using `externalProviders`. Each provider executes a local command that returns a JSON payload matching `ProviderSnapshot` fields.
-For safety, runtime external commands are disabled by default. Set `allowExternalProviderCommands` to `true` (in settings UI or `settings.json`) to enable them.
+Runtime command-based provider extensions are supported via `externalProviders`. For safety, external command execution is disabled by default and must be explicitly enabled.
 
 ## Extending Providers
 
-Provider architecture is incremental. New providers can be added via adapter + registry registration without redesigning core entities.
-You can also add runtime providers without recompiling through `externalProviders` command adapters.
+Provider architecture is incremental. New providers can be added either as native adapters or as runtime command providers without redesigning core entities.
 
 - Extension guide: [`docs/adding-providers.md`](./docs/adding-providers.md)
 
-## Notes
+## Contributing
 
-`docs/SPEC.md` remains local-only and untracked by design.
-
-`cli/limitlens.js` is kept as a legacy prototype reference.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## License
 

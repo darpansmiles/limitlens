@@ -63,6 +63,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
     private let notificationCoordinator = NotificationCoordinator()
     private let launchManager = LaunchAtLoginManager()
+    private let menuWelcomeTTLSeconds: TimeInterval = 48 * 60 * 60
 
     private var runtimeState = ThresholdRuntimeState.empty
     private var currentSettings = LimitLensSettings.default
@@ -86,6 +87,7 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         let runtimeStateResult = settingsStore.loadRuntimeStateWithDiagnostics()
         runtimeState = runtimeStateResult.state
         runtimeStateWarnings = runtimeStateResult.warnings
+        markMenuWelcomeSeenIfNeeded()
         loadSettingsFromStore()
 
         configureStatusItem()
@@ -327,6 +329,44 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
         timestampItem.isEnabled = false
         menu.addItem(timestampItem)
 
+        if shouldShowMenuWelcome() {
+            menu.addItem(NSMenuItem.separator())
+
+            let welcomeTitle = NSMenuItem(title: "Welcome to LimitLens", action: nil, keyEquivalent: "")
+            welcomeTitle.isEnabled = false
+            menu.addItem(welcomeTitle)
+
+            if let snapshot = currentSnapshot {
+                let detection = ProviderDetectionEvaluator.evaluate(snapshot: snapshot)
+                for status in detection {
+                    let marker = status.detected ? "✓" : "✗"
+                    let statusItem = NSMenuItem(
+                        title: "\(marker) \(status.displayName) \(status.detected ? "detected" : "not found")",
+                        action: nil,
+                        keyEquivalent: ""
+                    )
+                    statusItem.isEnabled = false
+                    menu.addItem(statusItem)
+                }
+            } else {
+                let pending = NSMenuItem(title: "Detecting providers...", action: nil, keyEquivalent: "")
+                pending.isEnabled = false
+                menu.addItem(pending)
+            }
+
+            let severityHint = NSMenuItem(
+                title: "Severity colors: green=normal, amber=warning, red=critical.",
+                action: nil,
+                keyEquivalent: ""
+            )
+            severityHint.isEnabled = false
+            menu.addItem(severityHint)
+
+            let configureItem = NSMenuItem(title: "Configure Paths →", action: #selector(handleConfigurePathsFromWelcome), keyEquivalent: "")
+            configureItem.target = self
+            menu.addItem(configureItem)
+        }
+
         let cadenceItem = NSMenuItem(title: "Refresh cadence: \(activeRefreshInterval)s", action: nil, keyEquivalent: "")
         cadenceItem.isEnabled = false
         menu.addItem(cadenceItem)
@@ -432,8 +472,20 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             text += "  | source issue"
         }
 
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        let focusField = settingsFocusField(for: snapshot.provider)
+        let hasFixAction = !snapshot.errors.isEmpty && focusField != nil
+        if hasFixAction {
+            text += "  | ⚠ Fix"
+        }
+
+        let item = NSMenuItem(
+            title: text,
+            action: hasFixAction ? #selector(handleProviderFixAction(_:)) : nil,
+            keyEquivalent: ""
+        )
+        item.isEnabled = hasFixAction
+        item.target = hasFixAction ? self : nil
+        item.representedObject = hasFixAction ? snapshot.provider.rawValue : nil
         item.attributedTitle = NSAttributedString(
             string: text,
             attributes: [
@@ -495,6 +547,37 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
             return min(baseInterval, 20)
         }
         return baseInterval
+    }
+
+    private func markMenuWelcomeSeenIfNeeded(now: Date = Date()) {
+        guard runtimeState.menuWelcomeFirstShownAt == nil else {
+            return
+        }
+
+        // Persisting first-seen time lets the 48-hour hide rule survive process restarts.
+        runtimeState.menuWelcomeFirstShownAt = now
+        settingsStore.saveRuntimeState(runtimeState)
+    }
+
+    private func shouldShowMenuWelcome(now: Date = Date()) -> Bool {
+        guard runtimeState.menuWelcomeDismissedAt == nil else {
+            return false
+        }
+
+        guard let firstShownAt = runtimeState.menuWelcomeFirstShownAt else {
+            return true
+        }
+
+        return now.timeIntervalSince(firstShownAt) < menuWelcomeTTLSeconds
+    }
+
+    private func dismissMenuWelcome(now: Date = Date()) {
+        guard runtimeState.menuWelcomeDismissedAt == nil else {
+            return
+        }
+
+        runtimeState.menuWelcomeDismissedAt = now
+        settingsStore.saveRuntimeState(runtimeState)
     }
 
     private func loadSettingsFromStore() {
@@ -571,22 +654,24 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
 
     @objc
     private func handleOpenSettingsWindow() {
-        let controller = SettingsWindowController(settings: currentSettings) { [weak self] updated in
-            guard let self else {
-                return
-            }
+        openSettingsWindow(focusField: nil)
+    }
 
-            self.currentSettings = updated
-            self.settingsStore.saveSettings(updated)
+    @objc
+    private func handleConfigurePathsFromWelcome() {
+        openSettingsWindow(focusField: nil)
+    }
 
-            // Applying immediately ensures threshold and cadence changes take effect now.
-            self.applyLaunchPreference()
-            self.startOrUpdateTimer(force: true, snapshot: self.currentSnapshot)
-            self.refreshSnapshot(sendNotifications: false)
+    @objc
+    private func handleProviderFixAction(_ sender: NSMenuItem) {
+        guard
+            let raw = sender.representedObject as? String,
+            let focusField = settingsFocusField(for: ProviderName(rawValue: raw))
+        else {
+            return
         }
 
-        settingsWindowController = controller
-        controller.present()
+        openSettingsWindow(focusField: focusField)
     }
 
     @objc
@@ -629,6 +714,39 @@ final class LimitLensMenuBarApp: NSObject, NSApplicationDelegate {
     @objc
     private func handleQuit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private func openSettingsWindow(focusField: SettingsWindowController.FocusField?) {
+        let controller = SettingsWindowController(settings: currentSettings, focusField: focusField) { [weak self] updated in
+            guard let self else {
+                return
+            }
+
+            self.currentSettings = updated
+            self.settingsStore.saveSettings(updated)
+            self.dismissMenuWelcome()
+
+            // Applying immediately ensures threshold and cadence changes take effect now.
+            self.applyLaunchPreference()
+            self.startOrUpdateTimer(force: true, snapshot: self.currentSnapshot)
+            self.refreshSnapshot(sendNotifications: false)
+        }
+
+        settingsWindowController = controller
+        controller.present()
+    }
+
+    private func settingsFocusField(for provider: ProviderName) -> SettingsWindowController.FocusField? {
+        switch provider {
+        case .codex:
+            return .codexPath
+        case .claude:
+            return .claudePath
+        case .antigravity:
+            return .antigravityLogsPath
+        case .custom:
+            return nil
+        }
     }
 }
 

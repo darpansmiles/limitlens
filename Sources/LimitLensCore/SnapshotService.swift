@@ -26,6 +26,13 @@ public struct SnapshotService {
         // Each provider is read independently so one parser failure cannot block the others.
         let collected = allAdapters.map { adapter in
             adapter.collect(using: settings)
+        }.map { snapshot in
+            var normalized = snapshot
+            // If adapters report errors without guidance, we attach a generic fallback fix path.
+            if !normalized.errors.isEmpty, normalized.remediation == nil {
+                normalized.remediation = "Open LimitLens settings and verify the provider source path."
+            }
+            return normalized
         }
 
         return GlobalSnapshot(capturedAt: now, providers: ProviderRegistry.sortSnapshots(collected))

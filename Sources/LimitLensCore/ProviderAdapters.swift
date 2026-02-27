@@ -26,12 +26,21 @@ public struct CodexAdapter: ProviderAdapter {
         let provider = ProviderName(rawValue: descriptor.id)
         let codexRoot = expandHomePath(settings.codexSessionsPath)
         let codexVersion = extractCodexVersion()
+
+        var codexErrors: [String] = []
+        if let issue = sourcePathIssue(rootPath: codexRoot, label: "Codex sessions path") {
+            codexErrors.append(issue)
+        }
+
         guard let latestFile = FileSystemSupport.latestFile(
             in: codexRoot,
             matching: { $0.pathExtension == "jsonl" }
         ) else {
             let summary = codexVersion.map { "No Codex session files found, version \($0)" }
                 ?? "No Codex session files found."
+            if codexErrors.isEmpty {
+                codexErrors.append("Missing session JSONL in \(codexRoot)")
+            }
             return ProviderSnapshot(
                 provider: provider,
                 providerDisplayName: descriptor.displayName,
@@ -39,7 +48,8 @@ public struct CodexAdapter: ProviderAdapter {
                 confidence: codexVersion == nil ? .unavailable : .low,
                 appVersion: codexVersion,
                 currentStatusSummary: summary,
-                errors: ["Missing session JSONL in \(codexRoot)"]
+                errors: codexErrors,
+                remediation: "Set `codexSessionsPath` in ~/Library/Application Support/LimitLens/settings.json or run with `--codex-path PATH`."
             )
         }
 
@@ -105,6 +115,14 @@ public struct ClaudeAdapter: ProviderAdapter {
         let claudeRoot = expandHomePath(settings.claudeProjectsPath)
         let antigravityLogsRoot = expandHomePath(settings.antigravityLogsPath)
 
+        var errors: [String] = []
+        if let issue = sourcePathIssue(rootPath: claudeRoot, label: "Claude projects path") {
+            errors.append(issue)
+        }
+        if let issue = sourcePathIssue(rootPath: antigravityLogsRoot, label: "Antigravity logs path") {
+            errors.append(issue)
+        }
+
         let latestConversationFile = FileSystemSupport.latestFile(
             in: claudeRoot,
             matching: { $0.pathExtension == "jsonl" }
@@ -152,6 +170,10 @@ public struct ClaudeAdapter: ProviderAdapter {
             sources.append(claudeAccountFile)
         }
 
+        if sources.isEmpty, errors.isEmpty {
+            errors.append("No Claude data sources found")
+        }
+
         return ProviderSnapshot(
             provider: provider,
             providerDisplayName: descriptor.displayName,
@@ -163,7 +185,10 @@ public struct ClaudeAdapter: ProviderAdapter {
             currentStatusSummary: summaryParts.joined(separator: ", "),
             historicalSignals: rateLimitSignal.map { [$0] } ?? [],
             sourceFiles: sources,
-            errors: sources.isEmpty ? ["No Claude data sources found"] : []
+            errors: errors,
+            remediation: errors.isEmpty
+                ? nil
+                : "Set `claudeProjectsPath`/`antigravityLogsPath` in ~/Library/Application Support/LimitLens/settings.json or use `--claude-path` and `--antigravity-logs-path`."
         )
     }
 
@@ -221,6 +246,11 @@ public struct AntigravityAdapter: ProviderAdapter {
         let codexLogFile = resolveCodexExtensionLog(antigravityLogsRoot: antigravityLogsRoot)
         let rateLimitSignal = codexLogFile.flatMap { extractRateLimitSignal(from: $0, kind: "antigravity_rate_limit") }
 
+        var errors: [String] = []
+        if let issue = sourcePathIssue(rootPath: antigravityLogsRoot, label: "Antigravity logs path") {
+            errors.append(issue)
+        }
+
         let confidence: ConfidenceLevel
         if version != nil {
             confidence = .medium
@@ -236,6 +266,9 @@ public struct AntigravityAdapter: ProviderAdapter {
         }
 
         let summary = version.map { "version \($0)" } ?? "Version unavailable"
+        if version == nil, rateLimitSignal == nil, errors.isEmpty {
+            errors.append("No Antigravity data sources found")
+        }
 
         return ProviderSnapshot(
             provider: provider,
@@ -246,7 +279,10 @@ public struct AntigravityAdapter: ProviderAdapter {
             currentStatusSummary: summary,
             historicalSignals: rateLimitSignal.map { [$0] } ?? [],
             sourceFiles: sources,
-            errors: (version == nil && rateLimitSignal == nil) ? ["No Antigravity data sources found"] : []
+            errors: errors,
+            remediation: errors.isEmpty
+                ? nil
+                : "Set `antigravityLogsPath` in ~/Library/Application Support/LimitLens/settings.json or run with `--antigravity-logs-path PATH`."
         )
     }
 
@@ -293,6 +329,7 @@ public struct ExternalCommandProviderAdapter: ProviderAdapter {
         let historicalSignals: [HistoricalSignal]?
         let sourceFiles: [String]?
         let errors: [String]?
+        let remediation: String?
     }
 
     public let descriptor: ProviderDescriptor
@@ -327,7 +364,8 @@ public struct ExternalCommandProviderAdapter: ProviderAdapter {
                 confidence: .unavailable,
                 currentStatusSummary: "External adapter command failed.",
                 sourceFiles: [],
-                errors: [result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).ifEmpty("Command exited with status \(result.exitCode).")]
+                errors: [result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).ifEmpty("Command exited with status \(result.exitCode).")],
+                remediation: "Enable external commands in settings and verify the provider command path is absolute and executable."
             )
         }
 
@@ -345,7 +383,8 @@ public struct ExternalCommandProviderAdapter: ProviderAdapter {
                 confidence: .unavailable,
                 currentStatusSummary: "External adapter output is not valid JSON snapshot payload.",
                 sourceFiles: [],
-                errors: ["Expected JSON on stdout for provider \(descriptor.id)."]
+                errors: ["Expected JSON on stdout for provider \(descriptor.id)."],
+                remediation: "Update the external provider command to print JSON payload fields matching ProviderSnapshot semantics."
             )
         }
 
@@ -368,9 +407,33 @@ public struct ExternalCommandProviderAdapter: ProviderAdapter {
             currentStatusSummary: summary,
             historicalSignals: payload.historicalSignals ?? [],
             sourceFiles: payload.sourceFiles ?? [],
-            errors: payload.errors ?? []
+            errors: payload.errors ?? [],
+            remediation: payload.remediation
+                ?? (payload.errors?.isEmpty == false
+                    ? "Check provider command output and settings for \(descriptor.id)."
+                    : nil)
         )
     }
+}
+
+private func sourcePathIssue(rootPath: String, label: String) -> String? {
+    let fileManager = FileManager.default
+    var isDirectory: ObjCBool = false
+
+    guard fileManager.fileExists(atPath: rootPath, isDirectory: &isDirectory) else {
+        return "\(label) not found at \(rootPath)"
+    }
+
+    guard isDirectory.boolValue else {
+        return "\(label) is not a directory: \(rootPath)"
+    }
+
+    // Readability checks catch sandbox, permission, and mounted-volume access issues.
+    guard fileManager.isReadableFile(atPath: rootPath) else {
+        return "\(label) is not readable: \(rootPath)"
+    }
+
+    return nil
 }
 
 private func extractRateLimitSignal(from fileURL: URL, kind: String) -> HistoricalSignal? {

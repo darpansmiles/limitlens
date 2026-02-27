@@ -1,0 +1,44 @@
+# This workflow builds release artifacts for version tags and publishes them to
+# GitHub Releases using structured release notes.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve Version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "NOTES_FILE=docs/releases/${GITHUB_REF_NAME}.md" >> "$GITHUB_ENV"
+
+      - name: Build Release Artifacts
+        run: bash ./scripts/build-release-assets.sh --version "${VERSION}" --unsigned
+
+      - name: Verify Notes File
+        run: |
+          if [[ ! -f "${NOTES_FILE}" ]]; then
+            echo "Missing release notes file: ${NOTES_FILE}" >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: LimitLens ${{ env.VERSION }}
+          body_path: ${{ env.NOTES_FILE }}
+          files: |
+            dist/limitlens-${{ env.VERSION }}-universal.tar.gz
+            dist/LimitLens-${{ env.VERSION }}.dmg

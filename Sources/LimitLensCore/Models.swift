@@ -169,6 +169,7 @@ public struct ProviderSnapshot: Codable, Sendable {
     public var historicalSignals: [HistoricalSignal]
     public var sourceFiles: [String]
     public var errors: [String]
+    public var remediation: String?
 
     public init(
         provider: ProviderName,
@@ -184,7 +185,8 @@ public struct ProviderSnapshot: Codable, Sendable {
         currentStatusSummary: String,
         historicalSignals: [HistoricalSignal] = [],
         sourceFiles: [String] = [],
-        errors: [String] = []
+        errors: [String] = [],
+        remediation: String? = nil
     ) {
         self.provider = provider
         self.providerDisplayName = providerDisplayName ?? provider.defaultDisplayName
@@ -200,6 +202,7 @@ public struct ProviderSnapshot: Codable, Sendable {
         self.historicalSignals = historicalSignals
         self.sourceFiles = sourceFiles
         self.errors = errors
+        self.remediation = remediation
     }
 
     public var pressurePercent: Double? {
@@ -391,13 +394,22 @@ public struct LimitLensSettings: Codable, Sendable {
 public struct ThresholdRuntimeState: Codable, Sendable {
     public var lastPercentByProvider: [String: Double]
     public var lastNotifiedByProviderThreshold: [String: Date]
+    public var cliWelcomeShownAt: Date?
+    public var menuWelcomeFirstShownAt: Date?
+    public var menuWelcomeDismissedAt: Date?
 
     public init(
         lastPercentByProvider: [String: Double] = [:],
-        lastNotifiedByProviderThreshold: [String: Date] = [:]
+        lastNotifiedByProviderThreshold: [String: Date] = [:],
+        cliWelcomeShownAt: Date? = nil,
+        menuWelcomeFirstShownAt: Date? = nil,
+        menuWelcomeDismissedAt: Date? = nil
     ) {
         self.lastPercentByProvider = lastPercentByProvider
         self.lastNotifiedByProviderThreshold = lastNotifiedByProviderThreshold
+        self.cliWelcomeShownAt = cliWelcomeShownAt
+        self.menuWelcomeFirstShownAt = menuWelcomeFirstShownAt
+        self.menuWelcomeDismissedAt = menuWelcomeDismissedAt
     }
 
     public static var empty: ThresholdRuntimeState {

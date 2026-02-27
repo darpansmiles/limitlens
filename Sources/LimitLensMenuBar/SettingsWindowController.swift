@@ -17,6 +17,12 @@ import LimitLensCore
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
+    enum FocusField {
+        case codexPath
+        case claudePath
+        case antigravityLogsPath
+    }
+
     private let builtInProviderIDs: Set<String> = [
         ProviderName.codex.rawValue,
         ProviderName.claude.rawValue,
@@ -26,6 +32,7 @@ final class SettingsWindowController: NSWindowController {
     private var workingSettings: LimitLensSettings
     private let onSave: (LimitLensSettings) -> Void
     private let notificationModes = NotificationMode.allCases
+    private let focusField: FocusField?
 
     private let codexPathField = NSTextField()
     private let claudePathField = NSTextField()
@@ -43,9 +50,14 @@ final class SettingsWindowController: NSWindowController {
     private let allowExternalCommandsCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let additionalOverrideNote = NSTextField(labelWithString: "")
 
-    init(settings: LimitLensSettings, onSave: @escaping (LimitLensSettings) -> Void) {
+    init(
+        settings: LimitLensSettings,
+        focusField: FocusField? = nil,
+        onSave: @escaping (LimitLensSettings) -> Void
+    ) {
         self.workingSettings = settings
         self.onSave = onSave
+        self.focusField = focusField
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 860, height: 660),
@@ -75,6 +87,7 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         showWindow(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        applyFocusField()
     }
 
     private func configureWindowContent() {
@@ -264,6 +277,28 @@ final class SettingsWindowController: NSWindowController {
         field.tokenizingCharacterSet = CharacterSet(charactersIn: ", ")
         field.completionDelay = 0
         field.placeholderString = "e.g. 70,75,80"
+    }
+
+    private func applyFocusField() {
+        guard let window, let focusField else {
+            return
+        }
+
+        let target: NSControl
+        switch focusField {
+        case .codexPath:
+            target = codexPathField
+        case .claudePath:
+            target = claudePathField
+        case .antigravityLogsPath:
+            target = antigravityLogsPathField
+        }
+
+        // Focusing the relevant field makes the "Fix" action actionable in one click.
+        window.makeFirstResponder(target)
+        if let textField = target as? NSTextField {
+            textField.selectText(self)
+        }
     }
 
     private func populateNotificationPopup() {

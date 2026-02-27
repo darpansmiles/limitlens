@@ -108,6 +108,11 @@ struct LimitLensCLI {
             for warning in settingsResult.warnings {
                 fputs("warning: \(warning)\n", stderr)
             }
+            let runtimeStateResult = settingsStore.loadRuntimeStateWithDiagnostics()
+            var runtimeState = runtimeStateResult.state
+            for warning in runtimeStateResult.warnings {
+                fputs("warning: \(warning)\n", stderr)
+            }
 
             // CLI flags override persisted settings for this process execution.
             if let codexPath = arguments.codexPath {
@@ -129,10 +134,18 @@ struct LimitLensCLI {
                 runWatchLoop(
                     settings: settings,
                     snapshotService: snapshotService,
-                    json: arguments.json
+                    json: arguments.json,
+                    runtimeState: &runtimeState,
+                    settingsStore: settingsStore
                 )
             } else {
-                runOnce(settings: settings, snapshotService: snapshotService, json: arguments.json)
+                runOnce(
+                    settings: settings,
+                    snapshotService: snapshotService,
+                    json: arguments.json,
+                    runtimeState: &runtimeState,
+                    settingsStore: settingsStore
+                )
             }
         } catch {
             fputs("error: \(error.localizedDescription)\n", stderr)
@@ -141,18 +154,44 @@ struct LimitLensCLI {
         }
     }
 
-    private static func runWatchLoop(settings: LimitLensSettings, snapshotService: SnapshotService, json: Bool) {
+    private static func runWatchLoop(
+        settings: LimitLensSettings,
+        snapshotService: SnapshotService,
+        json: Bool,
+        runtimeState: inout ThresholdRuntimeState,
+        settingsStore: SettingsStore
+    ) {
         let interval = max(10, settings.refreshIntervalSeconds)
 
         while true {
-            runOnce(settings: settings, snapshotService: snapshotService, json: json)
+            runOnce(
+                settings: settings,
+                snapshotService: snapshotService,
+                json: json,
+                runtimeState: &runtimeState,
+                settingsStore: settingsStore
+            )
             // A fixed sleep keeps runtime behavior easy to reason about in terminal sessions.
             Thread.sleep(forTimeInterval: TimeInterval(interval))
         }
     }
 
-    private static func runOnce(settings: LimitLensSettings, snapshotService: SnapshotService, json: Bool) {
+    private static func runOnce(
+        settings: LimitLensSettings,
+        snapshotService: SnapshotService,
+        json: Bool,
+        runtimeState: inout ThresholdRuntimeState,
+        settingsStore: SettingsStore
+    ) {
         let snapshot = snapshotService.collectSnapshot(using: settings)
+
+        // First-run onboarding is shown once and persisted in runtime state.
+        if !json, runtimeState.cliWelcomeShownAt == nil {
+            print(SnapshotFormatter.renderFirstRunWelcome(snapshot), terminator: "")
+            runtimeState.cliWelcomeShownAt = snapshot.capturedAt
+            settingsStore.saveRuntimeState(runtimeState)
+        }
+
         if json {
             print(SnapshotFormatter.renderJSON(snapshot), terminator: "")
         } else {

@@ -359,6 +359,72 @@ private struct CoreTestsRunner {
             try Self.expect(loaded.settings.refreshIntervalSeconds == LimitLensSettings.default.refreshIntervalSeconds, "Expected invalid interval to fall back to default")
             try Self.expect(loaded.settings.defaultThresholds == [65, 85], "Expected valid thresholds to remain intact")
         }
+
+        run("Provider detection evaluator reports detected and missing providers") {
+            let now = Date(timeIntervalSince1970: 1_700_000_000)
+            let snapshot = GlobalSnapshot(
+                capturedAt: now,
+                providers: [
+                    ProviderSnapshot(
+                        provider: .codex,
+                        confidence: .medium,
+                        appVersion: "1.2.3",
+                        currentStatusSummary: "version 1.2.3",
+                        sourceFiles: [],
+                        errors: []
+                    ),
+                    ProviderSnapshot(
+                        provider: .claude,
+                        confidence: .unavailable,
+                        currentStatusSummary: "No current metrics",
+                        sourceFiles: [],
+                        errors: ["No Claude data sources found"],
+                        remediation: "Set paths in settings."
+                    ),
+                    ProviderSnapshot(
+                        provider: .antigravity,
+                        confidence: .low,
+                        currentStatusSummary: "version 1.0.0",
+                        sourceFiles: ["/tmp/Codex.log"],
+                        errors: []
+                    ),
+                ]
+            )
+
+            let detection = ProviderDetectionEvaluator.evaluate(snapshot: snapshot)
+            try Self.expect(detection.count == 3, "Expected built-in detection entries")
+            try Self.expect(detection[0].provider == .codex && detection[0].detected, "Expected codex to be detected")
+            try Self.expect(detection[1].provider == .claude && !detection[1].detected, "Expected claude to be not detected")
+            try Self.expect(detection[2].provider == .antigravity && detection[2].detected, "Expected antigravity to be detected")
+        }
+
+        run("Snapshot service adds generic remediation when adapter omits it") {
+            struct BrokenAdapter: ProviderAdapter {
+                let descriptor = ProviderDescriptor(id: "broken", displayName: "Broken", shortLabel: "Brk")
+
+                func collect(using settings: LimitLensSettings) -> ProviderSnapshot {
+                    ProviderSnapshot(
+                        provider: .custom("broken"),
+                        providerDisplayName: "Broken",
+                        providerShortLabel: "Brk",
+                        confidence: .unavailable,
+                        currentStatusSummary: "broken",
+                        errors: ["No usable source"]
+                    )
+                }
+            }
+
+            let service = SnapshotService(adapters: [BrokenAdapter()])
+            var settings = LimitLensSettings.default
+            settings.allowExternalProviderCommands = false
+            let snapshot = service.collectSnapshot(using: settings, now: Date(timeIntervalSince1970: 1_700_000_001))
+            let broken = snapshot.provider(.custom("broken"))
+            try Self.expect(broken != nil, "Expected broken provider snapshot")
+            try Self.expect(
+                broken?.remediation == "Open LimitLens settings and verify the provider source path.",
+                "Expected generic remediation fallback"
+            )
+        }
     }
 
     private mutating func run(_ name: String, _ body: () throws -> Void) {

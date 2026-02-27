@@ -40,6 +40,28 @@ public enum SnapshotFormatter {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    public static func renderFirstRunWelcome(_ snapshot: GlobalSnapshot) -> String {
+        let detection = ProviderDetectionEvaluator.evaluate(snapshot: snapshot)
+        var lines: [String] = []
+
+        lines.append("┌────────────────────────────────────────────────────────────────────────┐")
+        lines.append("│ Welcome to LimitLens                                                  │")
+        lines.append("│ Local provider detection (first run):                                │")
+        for status in detection {
+            let marker = status.detected ? "✓" : "✗"
+            let message = status.detected
+                ? "\(status.displayName) detected"
+                : "\(status.displayName) not found"
+            lines.append("│ \(marker) \(message)".padRight(to: 70) + " │")
+        }
+        lines.append("│                                                                        │")
+        lines.append("│ Severity color map: green=normal, amber=warning, red=critical,        │")
+        lines.append("│ gray=unknown.                                                          │")
+        lines.append("└────────────────────────────────────────────────────────────────────────┘")
+
+        return lines.joined(separator: "\n") + "\n\n"
+    }
+
     public static func compactStatusText(_ snapshot: GlobalSnapshot, settings: LimitLensSettings = .default) -> String {
         let ordered = ProviderRegistry.sortSnapshots(snapshot.providers)
         var segments: [String] = []
@@ -99,6 +121,23 @@ public enum SnapshotFormatter {
             lines.append("  historical signal: none")
         }
 
+        for error in provider.errors {
+            lines.append("  error: \(error)")
+        }
+
+        if !provider.errors.isEmpty, let remediation = provider.remediation?.trimmingCharacters(in: .whitespacesAndNewlines), !remediation.isEmpty {
+            lines.append("  Try: \(remediation)")
+        }
+
         return lines.joined(separator: "\n")
+    }
+}
+
+private extension String {
+    func padRight(to width: Int) -> String {
+        guard count < width else {
+            return self
+        }
+        return self + String(repeating: " ", count: width - count)
     }
 }

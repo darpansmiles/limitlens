@@ -58,6 +58,8 @@ The command must print JSON to stdout with fields aligned to `ProviderSnapshot` 
 }
 ```
 
+If your adapter reports `errors`, include a `remediation` field so CLI/menu can render a direct fix hint.
+
 ## Optional Threshold Overrides
 
 Per-provider overrides use `settings.json` key `perProviderThresholds` keyed by provider ID.
