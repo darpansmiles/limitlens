@@ -16,6 +16,7 @@ This directory contains Formula and Cask definitions for a `homebrew-limitlens` 
 5. Validate:
 
 ```bash
-brew install <owner>/tap/limitlens
-brew install --cask <owner>/tap/limitlens-app
+brew tap darpansmiles/limitlens
+brew install darpansmiles/limitlens/limitlens
+brew install --cask darpansmiles/limitlens/limitlens-app
 ```

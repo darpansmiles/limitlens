@@ -136,14 +136,21 @@ Output file pattern: `dist/LimitLens-<version>.dmg`.
 
 ## Homebrew
 
-Planned tap commands:
+Published tap commands:
 
 ```bash
-brew install <owner>/tap/limitlens
-brew install --cask <owner>/tap/limitlens-app
+brew tap darpansmiles/limitlens
+brew install darpansmiles/limitlens/limitlens
+brew install --cask darpansmiles/limitlens/limitlens-app
 ```
 
-Tap assets and formula templates are under `packaging/homebrew`.
+If your environment cannot elevate to `/Applications`, install the cask into user space:
+
+```bash
+brew install --cask --appdir="$HOME/Applications" darpansmiles/limitlens/limitlens-app
+```
+
+Tap assets are maintained from this repo under `packaging/homebrew`.
 
 ## Unit Tests
 
